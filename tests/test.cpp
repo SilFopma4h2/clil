@@ -313,6 +313,18 @@ static void test_tools(const std::string& dir) {
     Json::parse(R"({"cmd":"echo alias"})", args);  // argument alias
     o = tool_run("bash", args, 1000, 5);
     CHECK(o.text.find("alias") != std::string::npos);
+    o = run_search("alia+s", dir, "*.txt", false, 1000);
+    CHECK(!o.error && o.text.find("b.txt") == std::string::npos);  // b.txt holds "hi"
+    o = run_search("HI", dir, "*.txt", true, 1000);
+    CHECK(o.text.find("b.txt:1:hi") != std::string::npos);
+    o = run_search("", dir, "b.*", false, 1000);
+    CHECK(o.text.find("b.txt") != std::string::npos);
+    o = run_search("^h\\w\\b", dir, "*.txt", false, 1000);
+    CHECK(o.text.find("b.txt:1:hi") != std::string::npos);
+    o = run_search("^\\d+$", dir, "*.txt", false, 1000);
+    CHECK(o.text == "(no matches)");
+    o = run_search("(", dir, "", false, 1000);
+    CHECK(o.error);
     o = tool_run("nope", args, 1000, 5);
     CHECK(o.error);
 

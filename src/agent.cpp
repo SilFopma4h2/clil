@@ -51,6 +51,7 @@ std::string App::system_prompt() const {
             os + " (" + u.machine + "). Working directory: " + cwd() + ". Date: " + date +
             ".\n"
             "Use the tools to inspect and change files and to run commands; never guess file contents.\n"
+            "- Use search to find code instead of guessing paths.\n"
             "- Read a file before editing it; copy old_string exactly from the file.\n"
             "- If a tool returns Error, fix the call and retry; never claim success after an error.\n"
             "- Shell commands must be non-interactive.\n"
@@ -444,7 +445,7 @@ std::string App::exec_tool(const ToolCall& c, bool& stop) {
     fprintf(stderr, "%s%s\n", head.c_str(), utf8_clip(title, room).c_str());
     if (!parsed)
         return "Error: arguments are not a valid JSON object (" + perr + "). Call the tool again with valid JSON.";
-    if (!tool_known(c.name)) return "Error: unknown tool '" + c.name + "'; available: bash, read, write, edit.";
+    if (!tool_known(c.name)) return "Error: unknown tool '" + c.name + "'; available: bash, read, search, write, edit.";
 
     if (tool_mutates(c.name)) {
         for (auto& l : tool_change_preview(c.name, args)) {

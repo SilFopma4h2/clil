@@ -4,6 +4,8 @@
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <fnmatch.h>
+#include <regex.h>
 #include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -16,6 +18,7 @@
 static const char* kSchemas = R"([
 {"type":"function","function":{"name":"bash","description":"Run a shell command in the working directory (fresh non-interactive sh each call). Returns output and exit code.","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}},
 {"type":"function","function":{"name":"read","description":"Read a text file, or list a directory.","parameters":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","description":"first line, 1-based"},"limit":{"type":"integer","description":"max lines"}},"required":["path"]}}},
+{"type":"function","function":{"name":"search","description":"Search file contents recursively with a regex (POSIX extended). Without pattern, list files matching glob. Skips .git, node_modules, build and binary files.","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","description":"directory or file, default ."},"glob":{"type":"string","description":"file name filter, e.g. *.cpp"},"ignore_case":{"type":"boolean"}}}}},
 {"type":"function","function":{"name":"write","description":"Create or overwrite a file.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
 {"type":"function","function":{"name":"edit","description":"Replace one exact, unique occurrence of old_string in a file with new_string.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}}}
 ])";
@@ -32,7 +35,7 @@ bool tool_mutates(const std::string& n) {
     return n == "bash" || n == "write" || n == "edit" || mcp_owns(n);
 }
 bool tool_known(const std::string& n) {
-    return n == "bash" || n == "read" || n == "write" || n == "edit" || mcp_owns(n);
+    return n == "bash" || n == "read" || n == "search" || n == "write" || n == "edit" || mcp_owns(n);
 }
 
 // Small models drift on argument names; accept the common aliases.
@@ -88,6 +91,10 @@ std::string tool_title(const std::string& name, const Json& a) {
         long off = arg_long(a, "offset", 0), lim = arg_long(a, "limit", 0);
         if (off > 0 || lim > 0) path += fmt(" [%ld+%ld]", off > 0 ? off : 1, lim);
         return path;
+    }
+    if (name == "search") {
+        std::string t = arg_str(a, {"pattern", "query"}), g = arg_str(a, {"glob", "include"});
+        return t + (g.empty() ? "" : "  " + g) + (path.empty() ? "" : "  in " + path);
     }
     if (name == "write") return path + " (" + plural(count_lines(arg_str(a, {"content", "text"})), "line") + ")";
     return path;
@@ -264,6 +271,122 @@ ToolOutput run_edit(const std::string& path, const std::string& old_s, const std
     return o;
 }
 
+// ------------------------------------------------------------------ search
+
+namespace {
+struct Search {
+    regex_t re;
+    bool has_re = false;
+    std::string glob, out;
+    size_t cap, matches = 0, files = 0;
+    bool full = false;
+};
+
+const size_t kMaxMatches = 100;
+
+void search_file(Search& s, const std::string& path) {
+    if (!s.glob.empty()) {
+        size_t sl = path.rfind('/');
+        if (fnmatch(s.glob.c_str(), path.c_str() + (sl == std::string::npos ? 0 : sl + 1), 0) != 0) return;
+    }
+    if (!s.has_re) {
+        ++s.matches;
+        s.out += path + "\n";
+        return;
+    }
+    std::string data, err;
+    if (!read_file(path, data, err) || data.size() > (2u << 20)) return;
+    if (memchr(data.data(), 0, std::min<size_t>(data.size(), 8192))) return;
+    ++s.files;
+    size_t ln = 0;
+    for (auto& line : split_lines(data)) {
+        ++ln;
+        if (regexec(&s.re, line.c_str(), 0, nullptr, 0) != 0) continue;
+        s.out += path + ":" + std::to_string(ln) + ":" + utf8_clip(utf8_clean(line), 200) + "\n";
+        if (++s.matches >= kMaxMatches || s.out.size() >= s.cap) {
+            s.full = true;
+            return;
+        }
+    }
+}
+
+void search_dir(Search& s, const std::string& dir) {
+    DIR* d = opendir(dir.c_str());
+    if (!d) return;
+    std::vector<std::string> names;
+    while (dirent* e = readdir(d))
+        names.push_back(e->d_name);
+    closedir(d);
+    std::sort(names.begin(), names.end());
+    for (auto& n : names) {
+        if (s.full || g_interrupted) return;
+        if (n == "." || n == ".." || n == ".git" || n == "node_modules" || n == "build") continue;
+        std::string p = dir == "." ? n : dir + (dir.back() == '/' ? "" : "/") + n;
+        if (is_dir(p))
+            search_dir(s, p);
+        else if (is_file(p))
+            search_file(s, p);
+    }
+}
+}  // namespace
+
+// POSIX regex lacks \d; rewrite it (shortcut: wrong inside [...], where \d stays literal-ish).
+static std::string expand_digit_class(const std::string& p) {
+    std::string r;
+    for (size_t i = 0; i < p.size(); ++i) {
+        if (p[i] == '\\' && i + 1 < p.size()) {
+            if (p[i + 1] == 'd')
+                r += "[0-9]";
+            else
+                r += p.substr(i, 2);
+            ++i;
+        } else
+            r += p[i];
+    }
+    return r;
+}
+
+ToolOutput run_search(const std::string& pattern, const std::string& path, const std::string& glob, bool icase,
+                      size_t cap) {
+    Search s;
+    s.cap = cap;
+    s.glob = glob;
+    if (!pattern.empty()) {
+        int flags = REG_EXTENDED | REG_NOSUB | (icase ? REG_ICASE : 0);
+#ifdef REG_ENHANCED
+        flags |= REG_ENHANCED;  // macOS: \w \s \b
+#endif
+        int rc = regcomp(&s.re, expand_digit_class(pattern).c_str(), flags);
+        if (rc != 0) {
+            char msg[128];
+            regerror(rc, &s.re, msg, sizeof msg);
+            return fail(std::string("invalid regex: ") + msg);
+        }
+        s.has_re = true;
+    }
+    std::string p = path.empty() ? "." : expand_home(path);
+    if (is_dir(p))
+        search_dir(s, p);
+    else if (is_file(p))
+        search_file(s, p);
+    else {
+        if (s.has_re) regfree(&s.re);
+        return fail(p + ": no such file or directory");
+    }
+    if (s.has_re) regfree(&s.re);
+    ToolOutput o;
+    o.text = head_tail(s.out, cap);
+    if (s.full) o.text += fmt("\n[stopped at %zu matches; narrow the pattern or path]", s.matches);
+    if (s.matches == 0) o.text = "(no matches)";
+    o.summary = s.has_re ? plural(s.matches, "match", "matches") + " in " + plural(s.files, "file")
+                         : plural(s.matches, "file");
+    auto lines = split_lines(o.text);
+    for (size_t i = 0; i < lines.size() && i < 6; ++i)
+        o.preview.push_back(utf8_clip(lines[i], 300));
+    if (lines.size() > 6) o.preview.push_back(fmt("… %zu more lines", lines.size() - 6));
+    return o;
+}
+
 // ------------------------------------------------------------------ bash
 
 ToolOutput run_bash(const std::string& cmd, size_t cap, int timeout_s) {
@@ -363,6 +486,10 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
     if (name == "bash") return run_bash(arg_str(a, {"command", "cmd"}), cap, timeout_s);
     std::string path = arg_str(a, {"path", "file_path", "file"});
     if (name == "read") return run_read(path, arg_long(a, "offset", 0), arg_long(a, "limit", 0), cap);
+    if (name == "search") {
+        bool ic = a["ignore_case"].boolean();
+        return run_search(arg_str(a, {"pattern", "query"}), path, arg_str(a, {"glob", "include"}), ic, cap);
+    }
     if (name == "write") {
         bool has = false;
         std::string content = arg_str(a, {"content", "text"}, &has);
@@ -384,5 +511,5 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
         if (!has_new) return fail("missing 'new_string'");
         return run_edit(path, arg_str(a, {"old_string", "old"}), nw, cap);
     }
-    return fail("unknown tool '" + name + "'; available: bash, read, write, edit");
+    return fail("unknown tool '" + name + "'; available: bash, read, search, write, edit");
 }
