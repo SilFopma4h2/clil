@@ -192,4 +192,4 @@ The code is in `src/`:
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+GPL-3.0-or-later, see [LICENSE](LICENSE). Copyright (C) 2026 Sil Fopma. Free to use and modify, as long as it stays open source and credits Sil Fopma.
