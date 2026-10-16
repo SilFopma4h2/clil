@@ -1,3 +1,5 @@
-# build artifacts
-clil
-*.o
+# build output
+/clil
+/build/
+# saved conversations
+clil-*.md

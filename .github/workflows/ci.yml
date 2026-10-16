@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: make
+      - name: unit tests
+        run: make test
+      - name: smoke
+        run: ./clil --version && ls -l clil
+      - name: universal binary (arm64 + x86_64)
+        if: runner.os == 'macOS'
+        run: make universal && lipo -info clil
