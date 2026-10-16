@@ -3,6 +3,7 @@
 #include <termios.h>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 extern bool g_color_out, g_color_err;  // decided once at startup (isatty + NO_COLOR)
@@ -50,6 +51,10 @@ public:
     enum Result { Line, Eof, Cancel };
     using Completer = std::function<void(const std::string& buf, size_t& word_start, std::vector<std::string>& out)>;
 
+    using MenuItems = std::vector<std::pair<std::string, std::string>>;  // name, description
+    // Live list under the prompt while the line is a bare "/word".
+    std::function<void(const std::string& word, MenuItems& out)> menu;
+
     explicit LineEditor(int fd) : fd_(fd) {}
     // `prompt` may contain ANSI codes; `prompt_width` is its visible width.
     Result read(const std::string& prompt, size_t prompt_width, std::string& out);
@@ -66,6 +71,9 @@ private:
     std::vector<std::string> hist_;
     std::string hist_path_;
     bool listed_ = false;
+    MenuItems items_;
+    std::string items_for_;
+    size_t sel_ = 0, drawn_rows_ = 0;
 
     bool raw(bool on);
     int getc(int timeout_ms);
@@ -76,5 +84,6 @@ private:
     size_t next_char(size_t p) const;
     size_t prev_word(size_t p) const;
     size_t next_word(size_t p) const;
+    void update_menu();
     void put(const std::string& s);
 };

@@ -3,6 +3,7 @@
 #pragma once
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "json.hpp"
@@ -54,6 +55,7 @@ public:
     // slash commands (commands.cpp); returns false when the user wants to quit
     bool command(const std::string& line);
     void complete(const std::string& buf, size_t& word_start, std::vector<std::string>& out);
+    void menu(const std::string& word, std::vector<std::pair<std::string, std::string>>& out) const;
     std::string expand_mentions(const std::string& text) const;
 
 private:

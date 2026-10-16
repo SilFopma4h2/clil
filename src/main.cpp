@@ -208,6 +208,7 @@ int main(int argc, char** argv) {
     ed.completer = [&](const std::string& buf, size_t& start, std::vector<std::string>& out) {
         app.complete(buf, start, out);
     };
+    ed.menu = [&](const std::string& word, LineEditor::MenuItems& out) { app.menu(word, out); };
     app.reset_conversation();
     std::string prompt_str = fmt("%s›%s ", ce(ansi::cyan), ce(ansi::reset));
     int cancels = 0;

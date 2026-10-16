@@ -1,4 +1,5 @@
 #include "tools.hpp"
+#include "mcp.hpp"
 #include "util.hpp"
 
 #include <dirent.h>
@@ -22,14 +23,16 @@ static const char* kSchemas = R"([
 Json tool_schemas() {
     Json j;
     Json::parse(kSchemas, j);
+    for (auto& t : mcp_schemas().items())
+        j.push(t);
     return j;
 }
 
 bool tool_mutates(const std::string& n) {
-    return n == "bash" || n == "write" || n == "edit";
+    return n == "bash" || n == "write" || n == "edit" || mcp_owns(n);
 }
 bool tool_known(const std::string& n) {
-    return n == "bash" || n == "read" || n == "write" || n == "edit";
+    return n == "bash" || n == "read" || n == "write" || n == "edit" || mcp_owns(n);
 }
 
 // Small models drift on argument names; accept the common aliases.
@@ -74,6 +77,7 @@ static std::vector<std::string> marked(const std::string& text, const char* mark
 }
 
 std::string tool_title(const std::string& name, const Json& a) {
+    if (mcp_owns(name)) return a.dump();
     if (name == "bash") {
         std::string c = arg_str(a, {"command", "cmd"});
         size_t nl = c.find('\n');
@@ -355,6 +359,7 @@ ToolOutput run_bash(const std::string& cmd, size_t cap, int timeout_s) {
 
 ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int timeout_s) {
     if (!a.is_obj()) return fail("arguments must be a JSON object");
+    if (mcp_owns(name)) return mcp_call(name, a, cap, timeout_s);
     if (name == "bash") return run_bash(arg_str(a, {"command", "cmd"}), cap, timeout_s);
     std::string path = arg_str(a, {"path", "file_path", "file"});
     if (name == "read") return run_read(path, arg_long(a, "offset", 0), arg_long(a, "limit", 0), cap);

@@ -209,7 +209,25 @@ void LineEditor::refresh(const std::string& prompt, size_t pw) {
         if (col >= scroll_ && col + c.w <= scroll_ + avail) out += c.text;
         col += c.w;
     }
-    out += "\x1b[0K\r";
+    out += "\x1b[0K";
+    // menu rows below the prompt (window of 8 around the selection); blank leftovers from the last draw
+    size_t first = sel_ >= 8 ? sel_ - 7 : 0, rows = std::min<size_t>(items_.size() - std::min(first, items_.size()), 8);
+    size_t nw = 0;
+    for (auto& it : items_)
+        nw = std::max(nw, display_width(it.first));
+    for (size_t i = 0; i < std::max(rows, drawn_rows_); ++i) {
+        out += "\r\n\x1b[0K";
+        if (i >= rows) continue;
+        const auto& it = items_[first + i];
+        bool on = first + i == sel_;
+        size_t room = (size_t)cols > nw + 6 ? (size_t)cols - nw - 6 : 1;
+        out += std::string("  ") + ce(on ? ansi::cyan : ansi::gray) + (on ? ce(ansi::bold) : "") + it.first +
+               ce(ansi::reset) + std::string(nw - display_width(it.first) + 2, ' ') + ce(ansi::dim) +
+               utf8_clip(it.second, room) + ce(ansi::reset);
+    }
+    if (std::max(rows, drawn_rows_)) out += fmt("\x1b[%zuA", std::max(rows, drawn_rows_));
+    drawn_rows_ = rows;
+    out += "\r";
     size_t target = pw + (cur - scroll_);
     if (target) out += fmt("\x1b[%zuC", target);
     put(out);
@@ -259,6 +277,18 @@ void LineEditor::complete(const std::string& prompt, size_t pw) {
     refresh(prompt, pw);
 }
 
+void LineEditor::update_menu() {
+    items_.clear();
+    if (menu && !buf_.empty() && buf_[0] == '/' && buf_.find_first_of(" \t\n") == std::string::npos) menu(buf_, items_);
+    if (buf_ != items_for_) {  // new text: highlight an exact match ("/model" before "/models"), else the first
+        sel_ = 0;
+        for (size_t i = 0; i < items_.size(); ++i)
+            if (items_[i].first == buf_) sel_ = i;
+    }
+    items_for_ = buf_;
+    if (sel_ >= items_.size()) sel_ = 0;
+}
+
 LineEditor::Result LineEditor::read(const std::string& prompt, size_t pw, std::string& out) {
     out.clear();
     if (!raw(true)) {  // not a terminal: plain line read
@@ -271,6 +301,9 @@ LineEditor::Result LineEditor::read(const std::string& prompt, size_t pw, std::s
     buf_.clear();
     pos_ = scroll_ = 0;
     listed_ = false;
+    items_.clear();
+    items_for_.clear();
+    sel_ = drawn_rows_ = 0;
     size_t hidx = hist_.size();
     std::string saved;
     auto hist_go = [&](int dir) {
@@ -292,6 +325,10 @@ LineEditor::Result LineEditor::read(const std::string& prompt, size_t pw, std::s
         }
         if (c != 9) listed_ = false;
         if (c == 13) {  // Enter; a trailing backslash continues on a new line
+            if (!items_.empty()) {  // run the highlighted menu entry
+                buf_ = items_[sel_].first;
+                break;
+            }
             if (pos_ == buf_.size() && !buf_.empty() && buf_.back() == '\\')
                 buf_.back() = '\n';
             else
@@ -329,7 +366,10 @@ LineEditor::Result LineEditor::read(const std::string& prompt, size_t pw, std::s
             pos_ = p;
         } else if (c == 12)
             put("\x1b[H\x1b[2J");
-        else if (c == 9)
+        else if (c == 9 && !items_.empty()) {
+            buf_ = items_[sel_].first + " ";
+            pos_ = buf_.size();
+        } else if (c == 9)
             complete(prompt, pw);
         else if (c == 16)
             hist_go(-1);
@@ -343,7 +383,11 @@ LineEditor::Result LineEditor::read(const std::string& prompt, size_t pw, std::s
                 while ((f = getc(50)) >= 0 && !(f >= 0x40 && f <= 0x7E))
                     params += (char)f;
                 bool mod = params.find(';') != std::string::npos;  // ctrl/alt + arrow
-                if (f == 'A')
+                if (f == 'A' && !items_.empty())
+                    sel_ = (sel_ + items_.size() - 1) % items_.size();
+                else if (f == 'B' && !items_.empty())
+                    sel_ = (sel_ + 1) % items_.size();
+                else if (f == 'A')
                     hist_go(-1);
                 else if (f == 'B')
                     hist_go(1);
@@ -403,9 +447,11 @@ LineEditor::Result LineEditor::read(const std::string& prompt, size_t pw, std::s
             }
             insert(s);
         }
+        update_menu();
         refresh(prompt, pw);
     }
     pos_ = buf_.size();
+    items_.clear();  // erases the menu rows
     refresh(prompt, pw);
     put("\x1b[?2004l\r\n");
     raw(false);

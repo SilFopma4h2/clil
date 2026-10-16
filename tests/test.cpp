@@ -4,6 +4,7 @@
 #include "http.hpp"
 #include "json.hpp"
 #include "lmstudio.hpp"
+#include "mcp.hpp"
 #include "tools.hpp"
 #include "util.hpp"
 
@@ -415,6 +416,42 @@ static void test_context_budget() {
     }
 }
 
+static void test_mcp(const std::string& dir) {
+    // a stub stdio server: initialize, tools/list, tools/call (echo)
+    std::string stub =
+        "import sys,json\n"
+        "for l in sys.stdin:\n"
+        " m=json.loads(l); i=m.get('id')\n"
+        " if i is None: continue\n"
+        " r={'protocolVersion':'2025-06-18'} if m['method']=='initialize' else "
+        "{'tools':[{'name':'echo','description':'d','inputSchema':{'type':'object'}}]} if m['method']=='tools/list' else "
+        "{'content':[{'type':'text','text':'got '+json.dumps(m['params']['arguments'])}]}\n"
+        " print(json.dumps({'jsonrpc':'2.0','id':i,'result':r}),flush=True)\n";
+    std::string err;
+    CHECK(write_file(dir + "/stub.py", stub, err));
+    CHECK(make_dirs(dir + "/home/.lmstudio"));
+    CHECK(write_file(dir + "/home/.lmstudio/mcp.json",
+                     "{\"mcpServers\":{\"stub\":{\"command\":\"python3\",\"args\":[\"" + dir +
+                         "/stub.py\"]},\"remote\":{\"url\":\"http://x\"}}}",
+                     err));
+    setenv("HOME", (dir + "/home").c_str(), 1);
+    auto list = mcp_list();
+    CHECK(list.size() == 2);
+    CHECK(!mcp_connect("remote", err));
+    CHECK(mcp_connect("stub", err));
+    CHECK(mcp_owns("stub__echo"));
+    CHECK(tool_mutates("stub__echo"));
+    CHECK(mcp_schemas().size() == 1);
+    Json args = Json::object();
+    args.set("x", 1);
+    ToolOutput o = tool_run("stub__echo", args, 1000, 10);
+    CHECK(!o.error);
+    CHECK_EQ(o.text, std::string("got {\"x\": 1}"));
+    CHECK(mcp_disconnect("stub"));
+    CHECK(!mcp_owns("stub__echo"));
+    CHECK(mcp_schemas().size() == 0);
+}
+
 int main() {
     signal(SIGPIPE, SIG_IGN);
     char tmpl[] = "/tmp/clil-test-XXXXXX";
@@ -426,6 +463,7 @@ int main() {
     test_tools(dir);
     test_reply_helpers();
     test_context_budget();
+    test_mcp(dir);
     run_attached({"rm", "-rf", dir});
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

@@ -1,6 +1,7 @@
 // The agent loop: stream a reply, run the tools it asks for, repeat.
 #include "app.hpp"
 #include "term.hpp"
+#include "mcp.hpp"
 #include "tools.hpp"
 #include "util.hpp"
 
@@ -30,7 +31,9 @@ static Json message(const char* role, const std::string& content) {
 }
 
 static const Json& tool_schema_cache() {
-    static const Json s = tool_schemas();
+    static Json s;
+    static int gen = -1;
+    if (gen != mcp_generation()) s = tool_schemas(), gen = mcp_generation();
     return s;
 }
 

@@ -1,5 +1,6 @@
 // Slash commands, LM Studio model management, completion and @file mentions.
 #include "app.hpp"
+#include "mcp.hpp"
 #include "term.hpp"
 #include "tools.hpp"
 #include "util.hpp"
@@ -183,29 +184,41 @@ static void print_models(const std::vector<ModelInfo>& models, bool loaded_only,
     if (!shown) note(loaded_only ? "no models loaded (use /load <model>)" : "no models downloaded (use /get <model>)");
 }
 
+// Single source for /help and the live command menu.
+struct CmdInfo {
+    const char* usage;
+    const char* desc;
+};
+static const CmdInfo kCmds[] = {
+    {"/models", "list downloaded models (● loaded)"},
+    {"/ps", "list loaded models"},
+    {"/model [name]", "show or switch the chat model"},
+    {"/load <name> [ctx]", "load a model, optionally with a context length"},
+    {"/unload [name|all]", "unload a model (default: current)"},
+    {"/get <name|url>", "download a model from the LM Studio catalog / Hugging Face"},
+    {"/server [start|stop|status]", "control the LM Studio server (via lms)"},
+    {"/lms <args>", "run any lms command, e.g. /lms log stream"},
+    {"/clear", "start a new conversation"},
+    {"/compact", "summarize the conversation to free context"},
+    {"/ctx", "show context usage"},
+    {"/system [text|off]", "show or set extra system instructions"},
+    {"/temp [x|off]", "show or set the temperature"},
+    {"/mcp [connect|disconnect <name>]", "list or connect MCP servers from ~/.lmstudio/mcp.json"},
+    {"/tools", "toggle tools (off = plain chat, smaller prompts)"},
+    {"/yes", "toggle auto-approve for bash/write/edit"},
+    {"/think", "toggle showing the model's reasoning"},
+    {"/save [file]", "save the conversation as Markdown"},
+    {"/help", "show this list"},
+    {"/exit", "quit (also Ctrl-D)"},
+};
+
 static void print_help() {
     static const char* rows[][2] = {
-        {"/models", "list downloaded models (● loaded)"},
-        {"/ps", "list loaded models"},
-        {"/model [name]", "show or switch the chat model"},
-        {"/load <name> [ctx]", "load a model, optionally with a context length"},
-        {"/unload [name|all]", "unload a model (default: current)"},
-        {"/get <name|url>", "download a model from the LM Studio catalog / Hugging Face"},
-        {"/server [start|stop|status]", "control the LM Studio server (via lms)"},
-        {"/lms <args>", "run any lms command, e.g. /lms log stream"},
-        {"/clear", "start a new conversation"},
-        {"/compact", "summarize the conversation to free context"},
-        {"/ctx", "show context usage"},
-        {"/system [text|off]", "show or set extra system instructions"},
-        {"/temp [x|off]", "show or set the temperature"},
-        {"/tools", "toggle tools (off = plain chat, smaller prompts)"},
-        {"/yes", "toggle auto-approve for bash/write/edit"},
-        {"/think", "toggle showing the model's reasoning"},
-        {"/save [file]", "save the conversation as Markdown"},
-        {"/exit", "quit (also Ctrl-D)"},
         {"!<cmd>", "run a shell command yourself"},
         {"@path", "attach a file to your message"},
     };
+    for (auto& c : kCmds)
+        printf("  %s%-28s%s %s\n", co(ansi::cyan), c.usage, co(ansi::reset), c.desc);
     for (auto& r : rows)
         printf("  %s%-28s%s %s\n", co(ansi::cyan), r[0], co(ansi::reset), r[1]);
     printf("\n  %sEnter sends · Ctrl-J or a trailing \\ adds a line · Tab completes · Ctrl-C stops a reply%s\n",
@@ -383,6 +396,34 @@ bool App::command(const std::string& line) {
     } else if (cmd == "/temp" || cmd == "/temperature") {
         if (a.size() > 1) cfg.temperature = lower(a[1]) == "off" ? -1 : atof(a[1].c_str());
         note(cfg.temperature < 0 ? "temperature: model default" : fmt("temperature: %.2f", cfg.temperature));
+    } else if (cmd == "/mcp") {
+        std::string sub = a.size() > 1 ? lower(a[1]) : "";
+        std::string arg = a.size() > 2 ? a[2] : "";
+        if (sub == "connect" || sub == "disconnect") {
+            std::vector<std::string> names;
+            for (auto& m : mcp_list())
+                if (arg == "all" ? m.supported : m.name == arg) names.push_back(m.name);
+            if (arg.empty() || (names.empty() && arg != "all")) names.push_back(arg);
+            for (auto& n : names) {
+                if (sub == "disconnect") {
+                    if (mcp_disconnect(n)) note("disconnected " + n);
+                    else warn(n + " is not connected");
+                    continue;
+                }
+                note("connecting " + n + " …");
+                if (!mcp_connect(n, err)) { warn(n + ": " + err); continue; }
+                for (auto& m : mcp_list())
+                    if (m.name == n) note(fmt("connected %s: %s", n.c_str(), plural(m.tools, "tool").c_str()));
+            }
+            if (!cfg.tools) warn("tools are off (/tools)");
+        } else {
+            auto list = mcp_list();
+            if (list.empty()) note("no servers in ~/.lmstudio/mcp.json");
+            for (auto& m : list)
+                fprintf(stderr, "  %s %s  %s\n", m.connected ? "●" : "○", m.name.c_str(),
+                        !m.supported ? "(remote url servers are not supported)"
+                        : m.connected ? plural(m.tools, "tool").c_str() : "");
+        }
     } else if (cmd == "/tools") {
         cfg.tools = !cfg.tools;
         if (!msgs.empty()) msgs[0].set("content", system_prompt());
@@ -413,10 +454,6 @@ bool App::command(const std::string& line) {
 
 // ------------------------------------------------------------- completion & mentions
 
-static const char* kCommands[] = {"/clear",  "/compact", "/ctx",   "/download", "/exit",  "/get",    "/help",
-                                  "/lms",    "/load",    "/model", "/models",   "/ps",    "/quit",   "/save",
-                                  "/server", "/system",  "/temp",  "/think",    "/tools", "/unload", "/yes"};
-
 static void complete_path(const std::string& word, std::vector<std::string>& out) {
     std::string w = expand_home(word);
     size_t slash = w.find_last_of('/');
@@ -440,7 +477,11 @@ void App::complete(const std::string& buf, size_t& start, std::vector<std::strin
     start = sp == std::string::npos ? 0 : sp + 1;
     std::string word = buf.substr(start);
     if (start == 0 && !word.empty() && word[0] == '/') {
-        for (const char* c : kCommands)
+        std::vector<std::pair<std::string, std::string>> items;
+        menu(word, items);
+        for (auto& i : items)
+            out.push_back(i.first);
+        for (const char* c : {"/quit", "/download"})  // aliases: Tab only, not in the menu
             if (starts_with(c, word.c_str())) out.push_back(c);
         return;
     }
@@ -465,7 +506,21 @@ void App::complete(const std::string& buf, size_t& start, std::vector<std::strin
         if (first == "/unload" && starts_with("all", w.c_str())) out.push_back("all");
         return;
     }
+    if (first == "/mcp") {
+        for (auto& m : mcp_list())
+            if (starts_with(m.name, word.c_str())) out.push_back(m.name);
+        for (const char* c : {"connect", "disconnect"})
+            if (starts_with(c, word.c_str())) out.push_back(c);
+        return;
+    }
     if (first == "/save") complete_path(word, out);
+}
+
+void App::menu(const std::string& word, std::vector<std::pair<std::string, std::string>>& out) const {
+    for (auto& c : kCmds) {
+        std::string name = std::string(c.usage).substr(0, strcspn(c.usage, " "));
+        if (starts_with(name, word.c_str())) out.push_back({name, c.desc});
+    }
 }
 
 std::string App::expand_mentions(const std::string& text) const {
