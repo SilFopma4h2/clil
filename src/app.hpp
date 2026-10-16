@@ -31,8 +31,9 @@ public:
     long long ctx_used = -1;  // tokens in context as of `ctx_used_msgs` messages (from usage)
     size_t ctx_used_msgs = 0;
     std::set<std::string> always_allow;
-    int tty_fd = -1;           // /dev/tty for approvals, -1 if none
-    bool interactive = false;  // REPL (status lines, hints)
+    std::set<std::string> failed_changes;  // files whose write/edit failed this turn
+    int tty_fd = -1;                       // /dev/tty for approvals, -1 if none
+    bool interactive = false;              // REPL (status lines, hints)
 
     // models & conversation
     bool refresh_models(std::string& err);

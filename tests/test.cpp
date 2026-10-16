@@ -291,6 +291,7 @@ static void test_tools(const std::string& dir) {
     CHECK(!o.error);
     o = run_edit(f, "nope", "x");
     CHECK(o.error && o.text.find("not found") != std::string::npos);
+    CHECK(o.text.find("NOT changed") != std::string::npos && o.text.find("three\n") != std::string::npos);
     std::string data;
     read_file(f, data, err);
     CHECK_EQ(data, std::string("ONE\nTWO\nthree\nthree\n"));

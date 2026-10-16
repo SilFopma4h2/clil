@@ -49,6 +49,7 @@ std::string App::system_prompt() const {
             ".\n"
             "Use the tools to inspect and change files and to run commands; never guess file contents.\n"
             "- Read a file before editing it; copy old_string exactly from the file.\n"
+            "- If a tool returns Error, fix the call and retry; never claim success after an error.\n"
             "- Shell commands must be non-interactive.\n"
             "- Be brief. When done, say in 1-3 lines what you did.";
     } else {
@@ -457,6 +458,13 @@ std::string App::exec_tool(const ToolCall& c, bool& stop) {
         if (v == 0) return feedback;
     }
     ToolOutput o = tool_run(c.name, args, tool_cap(), cfg.timeout_s);
+    if (c.name == "write" || c.name == "edit") {
+        std::string path = args["path"].str();
+        if (o.error)
+            failed_changes.insert(path);
+        else
+            failed_changes.erase(path);
+    }
     fprintf(stderr, "  %s└ %s%s\n", ce(o.error ? ansi::red : ansi::dim), o.summary.c_str(), ce(ansi::reset));
     if (!cfg.quiet)
         for (auto& l : o.preview)
@@ -475,13 +483,14 @@ int App::run_turn(const std::string& user_text) {
     }
     if (!ensure_model_ready()) return 1;
 
+    failed_changes.clear();
     fit_context(false, user_text.size());
     size_t turn_start = msgs.size();
     msgs.push_back(message("user", user_text));
     long long gen_tokens = 0;
     double gen_secs = 0;
     std::string last_sig;
-    int repeats = 0, rc = 0;
+    int repeats = 0, rc = 0, nudges = 0;
 
     for (int step = 0;; ++step) {
         if (step >= cfg.max_steps) {
@@ -546,6 +555,19 @@ int App::run_turn(const std::string& user_text) {
         msgs.push_back(am);
         if (rep.prompt_tokens >= 0) ctx_used_msgs = msgs.size();
 
+        if (calls.empty() && !failed_changes.empty() && nudges < 2 && step + 1 < cfg.max_steps) {
+            // It wants to stop although a file change failed: send it back once or twice.
+            ++nudges;
+            std::string paths;
+            for (auto& p : failed_changes)
+                paths += (paths.empty() ? "" : ", ") + p;
+            note("  ↻ the change to " + paths + " failed; asking the model to fix it");
+            msgs.push_back(message("user", "Your last change to " + paths +
+                                               " FAILED, so the file is unchanged. Do not claim it worked. Call the "
+                                               "tool again, copying old_string exactly from the file content shown "
+                                               "in the error (or use write with the full new content)."));
+            continue;
+        }
         if (calls.empty()) {
             if (rep.finish == "length") warn("reply was cut off (token limit reached)");
             if (clean.empty() && !pr.answered()) warn("the model returned an empty reply");
@@ -573,6 +595,9 @@ int App::run_turn(const std::string& user_text) {
             break;
         }
     }
+    // Small models sometimes claim success after a failed edit: say what really happened.
+    for (auto& path : failed_changes)
+        warn("⚠ " + path + " was not changed: the last edit/write of it failed");
     if ((interactive || isatty(2)) && !cfg.quiet && gen_tokens > 0) {
         std::string ctx = human_tokens(estimate_tokens());
         if (ctx_len > 0) ctx += "/" + human_ctx(ctx_len);

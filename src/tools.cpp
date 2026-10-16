@@ -165,17 +165,51 @@ ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap
 
 // ------------------------------------------------------------------ edit
 
-ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s) {
+// What the file really contains near the intended spot, so the model can retry at once.
+static std::string file_context(const std::string& data, const std::string& old_s, size_t cap) {
+    if (data.size() <= cap) return data;
+    auto lines = split_lines(data);
+    size_t hit = 0;
+    for (auto& l : split_lines(old_s)) {
+        std::string t = trim(l);
+        if (t.empty()) continue;
+        for (size_t i = 0; i < lines.size(); ++i)
+            if (lines[i].find(t) != std::string::npos) {
+                hit = i;
+                break;
+            }
+        break;
+    }
+    size_t from = hit > 15 ? hit - 15 : 0;
+    std::string out = fmt("[lines %zu+ of %zu]\n", from + 1, lines.size());
+    for (size_t i = from; i < lines.size() && out.size() + lines[i].size() < cap; ++i)
+        out += lines[i] + "\n";
+    return out;
+}
+
+static ToolOutput edit_fail(const std::string& path, const std::string& why, const std::string& data,
+                            const std::string& old_s, size_t cap) {
+    ToolOutput o;
+    o.error = true;
+    o.summary = why;
+    o.text = "Error: " + why + ". The file was NOT changed. Current content of " + path +
+             " (copy old_string exactly from it and call edit again):\n" + utf8_clean(file_context(data, old_s, cap));
+    return o;
+}
+
+ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s, size_t cap) {
     std::string p = expand_home(path);
     if (p.empty()) return fail("missing 'path'");
     if (old_s.empty()) return fail("old_string is empty; use write to create a file");
     std::string data, err;
-    if (!read_file(p, data, err)) return fail(err);
+    if (!read_file(p, data, err)) return fail(err + "; the file was NOT changed");
 
     size_t at = std::string::npos, n = 0;
     for (size_t f = data.find(old_s); f != std::string::npos; f = data.find(old_s, f + 1))
         if (++n == 1) at = f;
-    if (n > 1) return fail(fmt("old_string occurs %zu times in %s; include more surrounding lines", n, path.c_str()));
+    if (n > 1)
+        return edit_fail(path, fmt("old_string occurs %zu times; include more surrounding lines to make it unique", n),
+                         data, old_s, cap);
 
     size_t len = old_s.size();
     std::string repl = new_s;
@@ -205,8 +239,10 @@ ToolOutput run_edit(const std::string& path, const std::string& old_s, const std
             if (ok) hits++, hit = i;
         }
         if (hits != 1)
-            return fail(hits ? fmt("old_string matches %zu places in %s; include more lines", hits, path.c_str())
-                             : "old_string not found in " + path + "; read the file and copy the text exactly");
+            return edit_fail(path,
+                             hits ? fmt("old_string matches %zu places; include more lines", hits)
+                                  : std::string("old_string not found in the file"),
+                             data, old_s, cap);
         at = starts[hit];
         size_t e = data.find('\n', starts[hit + k - 1]);
         len = (e == std::string::npos ? data.size() : e) - at;
@@ -325,6 +361,7 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
     if (name == "write") {
         bool has = false;
         std::string content = arg_str(a, {"content", "text"}, &has);
+        if (!content.empty() && content.back() != '\n') content += '\n';  // text files end with a newline
         if (path.empty()) return fail("missing 'path'");
         if (!has) return fail("missing 'content'");
         std::string p = expand_home(path), err;
@@ -340,7 +377,7 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
         bool has_new = false;
         std::string nw = arg_str(a, {"new_string", "new"}, &has_new);
         if (!has_new) return fail("missing 'new_string'");
-        return run_edit(path, arg_str(a, {"old_string", "old"}), nw);
+        return run_edit(path, arg_str(a, {"old_string", "old"}), nw, cap);
     }
     return fail("unknown tool '" + name + "'; available: bash, read, write, edit");
 }

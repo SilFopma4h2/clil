@@ -25,6 +25,6 @@ std::vector<std::string> tool_change_preview(const std::string& name, const Json
 ToolOutput tool_run(const std::string& name, const Json& args, size_t cap, int timeout_s);
 
 // Exposed for tests.
-ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s);
+ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s, size_t cap = 4000);
 ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap);
 ToolOutput run_bash(const std::string& cmd, size_t cap, int timeout_s);
