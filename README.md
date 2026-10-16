@@ -1,4 +1,10 @@
-# clil — a tiny terminal coding agent for LM Studio
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo-light.svg" alt="clil" width="260">
+  </picture>
+</p>
+<p align="center">A tiny terminal coding agent for LM Studio</p>
 
 `clil` is a coding agent for your terminal that runs entirely on local models
 served by [LM Studio](https://lmstudio.ai). It is written in plain C++17 with
@@ -6,6 +12,9 @@ no dependencies (no libcurl, no JSON library, no readline), so it stays out of
 the way of the model that needs your laptop's RAM and GPU.
 
 ```
+▀▄  ▄▄▄ █ ▀ █   clil 0.1.0 · LM Studio 127.0.0.1:1234
+▄▀  █▄▄ █ █ █   qwen/qwen3-coder-30b (ctx 32k) · tools · /help
+
 › add a --verbose flag to main.cpp and make sure it still builds
 ● read  src/main.cpp
   └ 212 lines

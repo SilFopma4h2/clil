@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="80" viewBox="0 0 13 4" shape-rendering="crispEdges" role="img" aria-label="clil">
+  <title>clil</title>
+  <g fill="#EE6A1A">
+    <rect x="0" y="0" width="1" height="1"/>
+    <rect x="1" y="1" width="1" height="2"/>
+    <rect x="0" y="3" width="1" height="1"/>
+  </g>
+  <g fill="#16161A">
+    <rect x="4" y="1" width="1" height="3"/>
+    <rect x="5" y="1" width="2" height="1"/>
+    <rect x="5" y="3" width="2" height="1"/>
+    <rect x="8" y="0" width="1" height="4"/>
+    <rect x="10" y="0" width="1" height="1"/>
+    <rect x="10" y="2" width="1" height="2"/>
+    <rect x="12" y="0" width="1" height="4"/>
+  </g>
+</svg>

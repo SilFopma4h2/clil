@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="clil">
+  <title>clil</title>
+  <rect width="512" height="512" rx="114" fill="#121214"/>
+  <g transform="translate(136 160) scale(48)" shape-rendering="crispEdges">
+    <g fill="#FF7A2E">
+      <rect x="0" y="0" width="1" height="1"/>
+      <rect x="1" y="1" width="1" height="2"/>
+      <rect x="0" y="3" width="1" height="1"/>
+    </g>
+    <rect x="3" y="3" width="2" height="1" fill="#F2F2F0"/>
+  </g>
+</svg>

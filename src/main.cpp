@@ -59,25 +59,37 @@ static std::string read_all(int fd) {
     return out;
 }
 
+// The logo, drawn with half blocks on two terminal rows (same grid as assets/logo-*.svg).
+static const char* kLogo[2][2] = {{"▀▄", "  ▄▄▄ █ ▀ █"}, {"▄▀", "  █▄▄ █ █ █"}};
+
 static void banner(App& app, bool reachable, const std::string& err) {
-    std::string s = fmt("%sclil%s %s · ", ce(ansi::bold), ce(ansi::reset), CLIL_VERSION);
+    std::string line1 = fmt("%sclil%s%s %s", ce(ansi::bold), ce(ansi::reset), ce(ansi::gray), CLIL_VERSION);
+    std::string line2;
     if (!reachable) {
-        fprintf(stderr, "%s%sLM Studio not reachable%s (%s)\n", s.c_str(), ce(ansi::yellow), ce(ansi::reset),
-                err.c_str());
+        line1 += std::string(ce(ansi::reset)) + " · " + ce(ansi::yellow) + "LM Studio not reachable" + ce(ansi::reset);
+        line2 = std::string(ce(ansi::gray)) + err + ce(ansi::reset);
+    } else {
+        line1 += " · LM Studio " + app.lm.ep.str() + ce(ansi::reset);
+        if (app.cfg.model.empty())
+            line2 = std::string(ce(ansi::yellow)) + "no model loaded" + ce(ansi::reset);
+        else {
+            line2 = std::string(ce(ansi::cyan)) + app.cfg.model + ce(ansi::reset);
+            if (app.ctx_len) line2 += std::string(ce(ansi::gray)) + " (ctx " + human_ctx(app.ctx_len) + ")";
+        }
+        line2 += std::string(ce(ansi::gray)) + (app.cfg.tools ? " · tools" : " · chat only") +
+                 (app.cfg.yes ? " · auto-approve" : "") + " · /help" + ce(ansi::reset);
+    }
+    const char* accent = g_color_err ? "\x1b[38;5;208m" : "";
+    if (term_cols() >= 60) {
+        fprintf(stderr, "\n%s%s%s%s   %s\n", accent, kLogo[0][0], ce(ansi::reset), kLogo[0][1], line1.c_str());
+        fprintf(stderr, "%s%s%s%s   %s\n\n", accent, kLogo[1][0], ce(ansi::reset), kLogo[1][1], line2.c_str());
+    } else {
+        fprintf(stderr, "%s\n%s\n", line1.c_str(), line2.c_str());
+    }
+    if (!reachable)
         note("start the server in LM Studio (Developer tab) or with /server start, then /models");
-        return;
-    }
-    s += "LM Studio " + app.lm.ep.str() + " · ";
-    if (app.cfg.model.empty())
-        s += std::string(ce(ansi::yellow)) + "no model loaded" + ce(ansi::reset);
-    else {
-        s += std::string(ce(ansi::cyan)) + app.cfg.model + ce(ansi::reset);
-        if (app.ctx_len) s += " (ctx " + human_ctx(app.ctx_len) + ")";
-    }
-    s += app.cfg.tools ? " · tools" : " · chat only";
-    if (app.cfg.yes) s += " · auto-approve";
-    fprintf(stderr, "%s · %s/help%s\n", s.c_str(), ce(ansi::dim), ce(ansi::reset));
-    if (app.cfg.model.empty()) note("pick one: /models, then /load <name> (Tab completes)");
+    else if (app.cfg.model.empty())
+        note("pick one: /models, then /load <name> (Tab completes)");
 }
 
 int main(int argc, char** argv) {
