@@ -274,7 +274,9 @@ static const CmdInfo kCmds[] = {
     {"/think", "toggle showing the model's reasoning"},
     {"/undo", "restore the files the last write/edit calls changed"},
     {"/diff", "show the working directory's changes (git diff)"},
-    {"/save [file]", "save the conversation as Markdown"},
+    {"/save [file]", "save the conversation as Markdown (and .json for /resume)"},
+    {"/resume [file]", "continue a saved conversation (default: the newest clil-*.json here)"},
+    {"/retry", "send your last message again"},
     {"/help", "show this list"},
     {"/exit", "quit (also Ctrl-D)"},
 };
@@ -309,6 +311,37 @@ static bool save_markdown(const std::vector<Json>& msgs, const std::string& path
             md += "```\n" + c + "\n```\n\n";
     }
     return write_file(path, md, err);
+}
+
+// The .json twin of a saved Markdown file holds the messages for /resume.
+static std::string json_twin(const std::string& path) {
+    return (ends_with(path, ".md") ? path.substr(0, path.size() - 3) : path) + ".json";
+}
+
+static bool save_json(const std::vector<Json>& msgs, const std::string& path, std::string& err) {
+    Json all = Json::array();
+    for (size_t i = 1; i < msgs.size(); ++i)  // the system prompt is rebuilt on resume
+        all.push(msgs[i]);
+    return write_file(json_twin(path), all.dump(), err);
+}
+
+static bool load_conversation(std::string path, std::vector<Json>& out, std::string& err) {
+    if (path.empty()) {  // names carry a timestamp, so the largest is the newest
+        if (DIR* d = opendir(".")) {
+            while (dirent* e = readdir(d)) {
+                std::string n = e->d_name;
+                if (starts_with(n, "clil-") && ends_with(n, ".json") && n > path) path = n;
+            }
+            closedir(d);
+        }
+        if (path.empty()) return err = "no clil-*.json here (see /save)", false;
+    }
+    std::string text;
+    Json j;
+    if (!read_file(json_twin(path), text, err)) return false;
+    if (!Json::parse(text, j) || !j.is_arr()) return err = json_twin(path) + " is not a saved conversation", false;
+    out = j.items();
+    return true;
 }
 
 static void download(App& app, const std::string& model) {
@@ -564,10 +597,25 @@ bool App::command(const std::string& line) {
             strftime(buf, sizeof buf, "clil-%Y%m%d-%H%M%S.md", localtime(&t));
             path = buf;
         }
-        if (save_markdown(msgs, path, err))
+        if (save_markdown(msgs, path, err) && save_json(msgs, path, err))
             note("saved " + path);
         else
             error(err);
+    } else if (cmd == "/resume") {
+        std::vector<Json> loaded;
+        if (!load_conversation(a.size() > 1 ? expand_home(a[1]) : "", loaded, err)) return error(err), true;
+        reset_conversation();
+        msgs.insert(msgs.end(), loaded.begin(), loaded.end());
+        note(fmt("resumed %s", plural(loaded.size(), "message").c_str()));
+    } else if (cmd == "/retry") {
+        size_t i = msgs.size();
+        while (i > 1 && msgs[i - 1]["role"].str() != "user")
+            --i;
+        if (i <= 1) return note("nothing to retry"), true;
+        std::string text = msgs[i - 1]["content"].str();
+        msgs.resize(i - 1);  // back to the prefix LM Studio has cached
+        ctx_used = -1, ctx_used_msgs = 0;
+        run_turn(text);
     } else {
         error("unknown command " + a[0] + " (see /help)");
     }

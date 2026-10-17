@@ -409,6 +409,24 @@ static void fill_history(App& app, int rounds, size_t out_size) {
     }
 }
 
+static void test_save_resume(const std::string& dir) {
+    App a, b;
+    fill_history(a, 2, 50);
+    a.command("/save " + dir + "/chat.md");
+    CHECK(is_file(dir + "/chat.md"));
+    b.command("/resume " + dir + "/chat.md");
+    CHECK(b.msgs.size() == a.msgs.size());
+    CHECK_EQ(b.msgs[1].dump(), a.msgs[1].dump());
+    CHECK_EQ(b.msgs[3].dump(), a.msgs[3].dump());
+    CHECK_EQ(b.msgs[0].dump(), a.msgs[0].dump());  // system prompt is rebuilt
+    b.command("/resume " + dir + "/missing.md");
+    CHECK(b.msgs.size() == a.msgs.size());  // a failed resume keeps the conversation
+    App c;
+    c.reset_conversation();
+    c.command("/retry");  // nothing to retry
+    CHECK(c.msgs.size() == 1);
+}
+
 static void test_context_budget() {
     auto answer = [](const char* text) {
         return sse_response({std::string(R"({"choices":[{"index":0,"delta":{"content":")") + text + R"("}}]})",
@@ -576,6 +594,7 @@ int main(int argc, char** argv) {
     test_tools(dir);
     test_undo(dir);
     test_reply_helpers();
+    test_save_resume(dir);
     test_context_budget();
     test_state();
     test_mcp(dir);

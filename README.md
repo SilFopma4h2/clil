@@ -116,7 +116,9 @@ clil /models                           # any slash command works one-shot too
 | `/think` | show or hide the model's reasoning |
 | `/undo` | restore the files the last `write` / `edit` calls changed (not `bash`) |
 | `/diff` | show the working directory's changes (`git diff`) |
-| `/save [file]` | save the conversation as Markdown |
+| `/save [file]` | save the conversation as Markdown; a `.json` copy is written next to it for `/resume` |
+| `/resume [file]` | continue a saved conversation (default: the newest `clil-*.json` in this directory) |
+| `/retry` | drop the last reply and send your last message again |
 | `/exit` | quit (Ctrl-D also works) |
 | `!cmd` | run a shell command yourself |
 | `@path` | attach a file to your message (Tab completes paths) |
