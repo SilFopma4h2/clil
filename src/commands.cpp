@@ -272,7 +272,7 @@ static const CmdInfo kCmds[] = {
     {"/status", "server, model, context, slots, MCP and other clil's at a glance"},
     {"/stats", "tokens, speed and generation time this session"},
     {"/copy", "copy the last reply to the clipboard"},
-    {"/init", "have the model write an AGENTS.md for this project"},
+    {"/init", "write AGENTS.md (model) and a CLIL.md template for your own instructions"},
     {"/cd [dir]", "show or change the working directory"},
     {"/tools", "toggle tools (off = plain chat, smaller prompts)"},
     {"/yes", "toggle auto-approve for bash/write/edit"},
@@ -606,8 +606,21 @@ bool App::command(const std::string& line) {
         else
             error("could not copy: needs pbcopy, wl-copy or xclip");
     } else if (cmd == "/init") {
+        std::string err;
+        if (!is_file("CLIL.md")) {
+            if (write_file("CLIL.md",
+                           "# Instructions for clil\n\n"
+                           "Write your own instructions for clil here; they are added to the system prompt in this "
+                           "project.\nFor instructions in every project, use ~/.clil/CLIL.md.\n\n"
+                           "- Example: answer in Dutch.\n- Example: run `make test` after every change.\n",
+                           err))
+                note("created CLIL.md: put your own instructions in it");
+            else
+                error("could not write CLIL.md: " + err);
+            if (!msgs.empty()) msgs[0].set("content", system_prompt());
+        }
         if (is_file("AGENTS.md")) return note("AGENTS.md already exists; edit or remove it first"), true;
-        if (!cfg.tools) return error("/init needs tools (/tools)"), true;
+        if (!cfg.tools) return error("/init needs tools (/tools) for AGENTS.md"), true;
         run_turn("Read this project (build files, README, main source directories) and write a concise AGENTS.md in "
                  "the working directory for coding agents: how to build and test, code layout, conventions to follow. "
                  "Under 40 lines, no filler. Use the write tool.");

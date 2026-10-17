@@ -60,10 +60,10 @@ std::string App::system_prompt() const {
         s = "You are clil, a concise assistant in the user's terminal (" + os + ", " + date +
             "). Answer briefly; put code in fenced blocks.";
     }
-    for (const char* name : {"AGENTS.md", "CLIL.md"}) {
+    for (const std::string& name : {home_dir() + "/.clil/CLIL.md", std::string("AGENTS.md"), std::string("CLIL.md")}) {
         std::string body, err;
         if (is_file(name) && read_file(name, body, err) && !trim(body).empty())
-            s += std::string("\n\nProject instructions from ") + name + ":\n" + utf8_clip(trim(body), 6000);
+            s += "\n\nInstructions from " + name + ":\n" + utf8_clip(trim(body), 6000);
     }
     if (!cfg.system_extra.empty()) s += "\n\n" + cfg.system_extra;
     return s;
