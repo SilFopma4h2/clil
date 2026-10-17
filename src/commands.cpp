@@ -68,9 +68,43 @@ std::string App::resolve_model(const std::string& name, std::string* err) const 
 void App::select_model(const std::string& id) {
     cfg.model = id;
     ctx_len = 0;
-    if (const ModelInfo* m = find_model(id))
+    lm.model_slots = 1;
+    if (const ModelInfo* m = find_model(id)) {
         for (auto& li : m->loaded)
             if (li.first == id || m->loaded.size() == 1) ctx_len = li.second;
+        if (m->parallel > 1) lm.model_slots = m->parallel;
+    }
+    announce();
+}
+
+bool App::pick_host() {
+    if (hosts.size() < 2) return false;
+    size_t best = hosts.size();
+    long best_score = 0;
+    for (size_t i = 0; i < hosts.size(); ++i) {
+        LMStudio probe;
+        probe.ep = hosts[i];
+        std::vector<ModelInfo> ms;
+        std::string e;
+        if (!probe.list_models(ms, e)) continue;
+        long tier = cfg.model.empty() ? 1 : 3;  // 0: model loaded here, 1: could load it, 3: unknown here
+        for (auto& m : ms) {
+            bool loaded = !m.loaded.empty() && (cfg.model.empty() || m.key == cfg.model);
+            for (auto& li : m.loaded)
+                loaded |= li.first == cfg.model;
+            if (loaded)
+                tier = 0;
+            else if (m.key == cfg.model && tier > 1)
+                tier = 1;
+        }
+        std::string h = hosts[i].str();
+        long score = tier * 1000 + clil_busy(h.c_str()) * 10 + clil_users(h.c_str(), nullptr);
+        if (best == hosts.size() || score < best_score) best = i, best_score = score;
+    }
+    if (best == hosts.size() || hosts[best].str() == lm.ep.str()) return false;
+    lm.ep = hosts[best];
+    lm.api = -1;
+    return true;
 }
 
 void App::pick_default_model() {
@@ -85,8 +119,37 @@ void App::pick_default_model() {
 bool App::load_model(const std::string& key, int ctx) {
     Spinner sp;
     sp.start("loading " + key);
-    LoadResult lr;
+    // One load at a time per server; a clil that waited may find the model loaded by the one before it.
+    struct Guard {
+        const App& app;
+        int lock;
+        ~Guard() {
+            clil_unlock(lock);
+            app.announce();
+        }
+    } guard{*this, clil_lock(("load " + lm.ep.str()).c_str(),
+                             [](void* c, int) {
+                                 ((Spinner*)c)->tick();
+                                 return g_interrupted ? 1 : 0;
+                             },
+                             &sp)};
     std::string err;
+    if (guard.lock == -1) {
+        sp.stop();
+        g_interrupted = 0;
+        note("stopped waiting");
+        return false;
+    }
+    if (guard.lock >= 0 && refresh_models(err))
+        for (auto& m : models)
+            if (m.key == key && !m.loaded.empty()) {
+                sp.stop();
+                note(key + " was loaded by another clil");
+                select_model(m.loaded[0].first);
+                return true;
+            }
+    clil_set(lm.ep.str().c_str(), key.c_str(), CLIL_LOADING);
+    LoadResult lr;
     int r = lm.load(key, ctx, lr, err, [&] { sp.tick(); });
     sp.stop();
     if (r == 1) {
@@ -203,6 +266,8 @@ static const CmdInfo kCmds[] = {
     {"/ctx", "show context usage"},
     {"/system [text|off]", "show or set extra system instructions"},
     {"/temp [x|off]", "show or set the temperature"},
+    {"/peers", "other clil's on this machine and what they are doing"},
+    {"/host [n|host:port]", "list or switch the LM Studio servers (several: --host a,b)"},
     {"/mcp [connect|disconnect <name>]", "list or connect MCP servers from ~/.lmstudio/mcp.json"},
     {"/tools", "toggle tools (off = plain chat, smaller prompts)"},
     {"/yes", "toggle auto-approve for bash/write/edit"},
@@ -330,6 +395,9 @@ bool App::command(const std::string& line) {
         g_interrupted = 0;
         load_model(m ? m->key : a[1], ctx);
     } else if (cmd == "/unload") {
+        bool force = false;
+        for (size_t i = 1; i < a.size(); ++i)
+            if (a[i] == "--force") force = true, a.erase(a.begin() + (long)i--);
         refresh_models(err);
         std::vector<std::string> ids;
         std::string target = a.size() > 1 ? a[1] : cfg.model;
@@ -348,6 +416,12 @@ bool App::command(const std::string& line) {
             return error(err), true;
         if (ids.empty()) return note("nothing loaded to unload"), true;
         for (auto& id : ids) {
+            int users = clil_users(lm.ep.str().c_str(), id.c_str());
+            if (users && !force) {
+                warn(fmt("%s is in use by %s, not unloaded (/unload %s --force to override)", id.c_str(),
+                         plural((size_t)users, "other clil").c_str(), id.c_str()));
+                continue;
+            }
             int r = lm.unload(id, err);
             if (r == 0) {
                 std::string lms = find_lms();
@@ -361,6 +435,33 @@ bool App::command(const std::string& line) {
         refresh_models(err);
         if (const ModelInfo* m = find_model(cfg.model))
             if (m->loaded.empty()) ctx_len = 0;
+    } else if (cmd == "/peers") {
+        clil_peer p[32];
+        static const char* const kState[] = {"idle", "queued", "generating", "loading"};
+        int n = clil_peers(p, 32);
+        if (n < 2) note("no other clil running");
+        for (int i = 0; i < n; ++i)
+            fprintf(stderr, "  %s %-21s %-30s %s\n", p[i].self ? "●" : "○", p[i].host, p[i].model[0] ? p[i].model : "-",
+                    kState[p[i].state & 3]);
+    } else if (cmd == "/host") {
+        if (a.size() > 1) {
+            size_t n = (size_t)atoi(a[1].c_str());
+            Endpoint e = lm.ep;
+            if (n >= 1 && n <= hosts.size())
+                e = hosts[n - 1];
+            else if (!parse_endpoint(a[1], e, err))
+                return error(err), true;
+            lm.ep = e;
+            lm.api = -1;
+            if (!refresh_models(err)) warn(err);
+            announce();
+        }
+        for (size_t i = 0; i < std::max<size_t>(hosts.size(), 1); ++i) {
+            Endpoint e = hosts.empty() ? lm.ep : hosts[i];
+            std::string h = e.str();
+            fprintf(stderr, "  %s %zu %-21s %d busy · %d clil\n", h == lm.ep.str() ? "●" : "○", i + 1, h.c_str(),
+                    clil_busy(h.c_str()), clil_users(h.c_str(), nullptr));
+        }
     } else if (cmd == "/get" || cmd == "/download") {
         if (a.size() < 2) return error("usage: /get <model>, e.g. /get qwen/qwen3-4b"), true;
         download(*this, a[1]);
@@ -374,6 +475,11 @@ bool App::command(const std::string& line) {
         if (cmd == "/server" && a.size() == 1) argv.push_back("status");
         run_attached(argv);
     } else if (cmd == "/clear" || cmd == "/new" || cmd == "/reset") {
+        if (pick_host()) {  // a fresh conversation has no prompt cache to lose
+            refresh_models(err);
+            announce();
+            note("server: " + lm.ep.str());
+        }
         reset_conversation();
         note("new conversation");
     } else if (cmd == "/compact") {

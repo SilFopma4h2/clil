@@ -1,5 +1,6 @@
 // clil — a small, fast terminal coding agent for LM Studio.
 #include "app.hpp"
+#include "mcp.hpp"
 #include "term.hpp"
 #include "util.hpp"
 
@@ -26,6 +27,8 @@ static void usage() {
            "options:\n"
            "  -m, --model NAME     model to use (env LMSTUDIO_MODEL; default: the loaded model)\n"
            "  -H, --host HOST:PORT LM Studio server (env LMSTUDIO_HOST; default 127.0.0.1:1234)\n"
+           "                       several, comma separated: the least loaded one is used\n"
+           "      --slots N        requests per server that all clil's run at once (env CLIL_SLOTS; default: the model's \"parallel\")\n"
            "  -c, --ctx N          context length when clil loads a model\n"
            "  -s, --system TEXT    extra system instructions\n"
            "  -t, --temp X         temperature\n"
@@ -104,6 +107,7 @@ int main(int argc, char** argv) {
     for (const char* k : {"LMSTUDIO_HOST", "LM_STUDIO_HOST"})
         if (getenv(k) && *getenv(k)) host = getenv(k);
     if (const char* t = getenv("LM_API_TOKEN")) app.lm.ep.token = t;
+    if (const char* n = getenv("CLIL_SLOTS")) app.lm.slots = atoi(n);
     if (const char* m = getenv("LMSTUDIO_MODEL")) app.cfg.model = m;
     bool no_color = getenv("NO_COLOR") && *getenv("NO_COLOR");
 
@@ -120,7 +124,11 @@ int main(int argc, char** argv) {
         if (s == "--") {
             for (++i; i < argc; ++i)
                 words.push_back(argv[i]);
-        } else if (s == "-m" || s == "--model")
+        } else if (s == "--mcp-host")  // internal: shared MCP server process, see mcp.cpp
+            return mcp_host_main(val());
+        else if (s == "--slots")
+            app.lm.slots = atoi(val().c_str());
+        else if (s == "-m" || s == "--model")
             app.cfg.model = val();
         else if (s == "-H" || s == "--host")
             host = val();
@@ -150,7 +158,8 @@ int main(int argc, char** argv) {
             return usage(), 0;
         else if (s == "-V" || s == "--version")
             return puts("clil " CLIL_VERSION), 0;
-        else if (s.size() > 1 && s[0] == '-') {
+        else if (s.size() > 1 && s[0] == '-' && !(!words.empty() && words[0][0] == '/'))  // "/unload x --force"
+        {
             fprintf(stderr, "clil: unknown option %s (see --help)\n", s.c_str());
             return 2;
         } else
@@ -158,10 +167,19 @@ int main(int argc, char** argv) {
     }
     g_color_out = !no_color && isatty(1);
     g_color_err = !no_color && isatty(2);
-    if (!host.empty() && !parse_endpoint(host, app.lm.ep, err)) {
-        fprintf(stderr, "clil: %s\n", err.c_str());
-        return 2;
+    for (size_t from = 0; from <= host.size();) {
+        size_t c = std::min(host.find(',', from), host.size());
+        std::string part = trim(host.substr(from, c - from));
+        from = c + 1;
+        Endpoint e = app.lm.ep;
+        if (part.empty()) continue;
+        if (!parse_endpoint(part, e, err)) {
+            fprintf(stderr, "clil: %s\n", err.c_str());
+            return 2;
+        }
+        app.hosts.push_back(e);
     }
+    if (!app.hosts.empty()) app.lm.ep = app.hosts[0];
     app.tty_fd = open("/dev/tty", O_RDWR | O_CLOEXEC);
     if (app.tty_fd < 0 && isatty(0)) app.tty_fd = 0;
 
@@ -173,6 +191,8 @@ int main(int argc, char** argv) {
     struct stat st;
     bool piped = !isatty(0) && fstat(0, &st) == 0 &&
                  (S_ISFIFO(st.st_mode) || S_ISREG(st.st_mode) || (prompt.empty() && !S_ISCHR(st.st_mode)));
+    clil_open(nullptr);
+    app.pick_host();
     bool reachable = app.refresh_models(err);
     if (reachable && app.cfg.model.empty())
         app.pick_default_model();
@@ -181,6 +201,7 @@ int main(int argc, char** argv) {
         if (id.empty()) warn(err);
         app.select_model(id.empty() ? app.cfg.model : id);
     }
+    app.announce();
 
     // ---- one-shot: a prompt on the command line and/or piped input
     if (!prompt.empty() || piped || !isatty(0)) {
