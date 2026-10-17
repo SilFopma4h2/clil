@@ -60,10 +60,10 @@ std::string App::system_prompt() const {
         s = "You are clil, a concise assistant in the user's terminal (" + os + ", " + date +
             "). Answer briefly; put code in fenced blocks.";
     }
-    for (const char* name : {"AGENTS.md", "CLIL.md"}) {
+    for (const std::string& name : {home_dir() + "/.clil/CLIL.md", std::string("AGENTS.md"), std::string("CLIL.md")}) {
         std::string body, err;
         if (is_file(name) && read_file(name, body, err) && !trim(body).empty())
-            s += std::string("\n\nProject instructions from ") + name + ":\n" + utf8_clip(trim(body), 6000);
+            s += "\n\nInstructions from " + name + ":\n" + utf8_clip(trim(body), 6000);
     }
     if (!cfg.system_extra.empty()) s += "\n\n" + cfg.system_extra;
     return s;
@@ -492,6 +492,7 @@ int App::run_turn(const std::string& user_text) {
     if (!ensure_model_ready()) return 1;
 
     failed_changes.clear();
+    tool_new_turn();
     fit_context(false, user_text.size());
     size_t turn_start = msgs.size();
     msgs.push_back(message("user", user_text));
@@ -546,6 +547,10 @@ int App::run_turn(const std::string& user_text) {
         if (rep.prompt_tokens >= 0) ctx_used = rep.prompt_tokens + std::max(0LL, rep.completion_tokens);
         gen_tokens += rep.completion_tokens >= 0 ? rep.completion_tokens : rep.deltas;
         gen_secs += rep.gen_secs;
+        ++stats.replies;
+        stats.prompt += std::max(0LL, rep.prompt_tokens);
+        stats.completion += rep.completion_tokens >= 0 ? rep.completion_tokens : rep.deltas;
+        stats.secs += rep.gen_secs;
 
         std::vector<ToolCall> calls = rep.calls;
         if (calls.empty() && cfg.tools) extract_text_tool_calls(clean, calls);

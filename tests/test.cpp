@@ -343,6 +343,27 @@ static void test_tools(const std::string& dir) {
     CHECK(o.text.size() < 2200 && o.text.find("100000") != std::string::npos);
 }
 
+static void test_undo(const std::string& dir) {
+    std::string f = dir + "/undo.txt", err, s;
+    Json a = Json::object();
+    a.set("path", f).set("content", "one\n");
+    tool_new_turn();
+    CHECK(!tool_run("write", a, 1000, 5).error);  // creates the file
+    a.set("content", "two\n");
+    CHECK(!tool_run("write", a, 1000, 5).error);  // same turn: still one backup, of "did not exist"
+    tool_new_turn();
+    Json e = Json::object();
+    e.set("path", f).set("old_string", "two").set("new_string", "three");
+    CHECK(!tool_run("edit", e, 1000, 5).error);
+    CHECK(read_file(f, s, err) && s == "three\n");
+    CHECK_EQ(std::to_string(tool_undo(err).size()), std::string("1"));
+    CHECK(read_file(f, s, err) && s == "two\n");
+    CHECK_EQ(std::to_string(tool_undo(err).size()), std::string("1"));
+    CHECK(!is_file(f));
+    tool_undo(err);  // older groups from the tests above may still be there; f stays gone
+    CHECK(!is_file(f) && err.empty());
+}
+
 static void test_reply_helpers() {
     CHECK_EQ(strip_think("<think>\nplan\n</think>\n\nAnswer"), std::string("Answer"));
     CHECK_EQ(strip_think("plan only\n</think>Answer"), std::string("Answer"));
@@ -388,6 +409,24 @@ static void fill_history(App& app, int rounds, size_t out_size) {
     }
 }
 
+static void test_save_resume(const std::string& dir) {
+    App a, b;
+    fill_history(a, 2, 50);
+    a.command("/save " + dir + "/chat.md");
+    CHECK(is_file(dir + "/chat.md"));
+    b.command("/resume " + dir + "/chat.md");
+    CHECK(b.msgs.size() == a.msgs.size());
+    CHECK_EQ(b.msgs[1].dump(), a.msgs[1].dump());
+    CHECK_EQ(b.msgs[3].dump(), a.msgs[3].dump());
+    CHECK_EQ(b.msgs[0].dump(), a.msgs[0].dump());  // system prompt is rebuilt
+    b.command("/resume " + dir + "/missing.md");
+    CHECK(b.msgs.size() == a.msgs.size());  // a failed resume keeps the conversation
+    App c;
+    c.reset_conversation();
+    c.command("/retry");  // nothing to retry
+    CHECK(c.msgs.size() == 1);
+}
+
 static void test_context_budget() {
     auto answer = [](const char* text) {
         return sse_response({std::string(R"({"choices":[{"index":0,"delta":{"content":")") + text + R"("}}]})",
@@ -428,6 +467,20 @@ static void test_context_budget() {
         CHECK_EQ(app.msgs[3]["content"].str(), std::string("next"));
         CHECK_EQ(app.msgs[4]["content"].str(), std::string("fine"));
     }
+}
+
+static void test_cd(const std::string& dir) {
+    App app;
+    app.reset_conversation();
+    std::string old = cwd();
+    CHECK(make_dirs(dir + "/cdtest"));
+    app.command("/cd " + dir + "/cdtest");
+    CHECK(cwd().find("/cdtest") != std::string::npos);
+    CHECK(app.msgs[0]["content"].str().find("/cdtest") != std::string::npos);  // system prompt follows
+    std::string here = cwd();
+    app.command("/cd " + dir + "/nope");  // not a directory: stays put
+    CHECK_EQ(cwd(), here);
+    CHECK(chdir(old.c_str()) == 0);
 }
 
 static int give_up(void*, int) {
@@ -516,7 +569,8 @@ static void test_mcp(const std::string& dir) {
     ToolOutput o = tool_run("stub__echo", args, 1000, 10);
     CHECK(!o.error);
     CHECK_EQ(o.text, std::string("got {\"x\": 1}"));
-    FILE* pg = popen("pgrep -f '[s]tub.py' | wc -l", "r");  // one server for both clil's
+    // one server for both clil's (only ours: a host from the previous run may still be winding down)
+    FILE* pg = popen(("pgrep -f '" + dir + "/[s]tub.py' | wc -l").c_str(), "r");
     int procs = 0;
     if (pg) {
         if (fscanf(pg, "%d", &procs) != 1) procs = -1;
@@ -553,8 +607,11 @@ int main(int argc, char** argv) {
     test_stream_chat();
     test_models();
     test_tools(dir);
+    test_undo(dir);
     test_reply_helpers();
+    test_save_resume(dir);
     test_context_budget();
+    test_cd(dir);
     test_state();
     test_mcp(dir);
     run_attached({"rm", "-rf", dir});

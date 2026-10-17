@@ -269,10 +269,19 @@ static const CmdInfo kCmds[] = {
     {"/peers", "other clil's on this machine and what they are doing"},
     {"/host [n|host:port]", "list or switch the LM Studio servers (several: --host a,b)"},
     {"/mcp [connect|disconnect <name>]", "list or connect MCP servers from ~/.lmstudio/mcp.json"},
+    {"/status", "server, model, context, slots, MCP and other clil's at a glance"},
+    {"/stats", "tokens, speed and generation time this session"},
+    {"/copy", "copy the last reply to the clipboard"},
+    {"/init", "write AGENTS.md (model) and a CLIL.md template for your own instructions"},
+    {"/cd [dir]", "show or change the working directory"},
     {"/tools", "toggle tools (off = plain chat, smaller prompts)"},
     {"/yes", "toggle auto-approve for bash/write/edit"},
     {"/think", "toggle showing the model's reasoning"},
-    {"/save [file]", "save the conversation as Markdown"},
+    {"/undo", "restore the files the last write/edit calls changed"},
+    {"/diff", "show the working directory's changes (git diff)"},
+    {"/save [file]", "save the conversation as Markdown (and .json for /resume)"},
+    {"/resume [file]", "continue a saved conversation (default: the newest clil-*.json here)"},
+    {"/retry", "send your last message again"},
     {"/help", "show this list"},
     {"/exit", "quit (also Ctrl-D)"},
 };
@@ -288,6 +297,17 @@ static void print_help() {
         printf("  %s%-28s%s %s\n", co(ansi::cyan), r[0], co(ansi::reset), r[1]);
     printf("\n  %sEnter sends · Ctrl-J or a trailing \\ adds a line · Tab completes · Ctrl-C stops a reply%s\n",
            co(ansi::dim), co(ansi::reset));
+}
+
+static bool clipboard(const std::string& text) {
+    for (const char* c : {"pbcopy", "wl-copy", "xclip"}) {
+        if (find_in_path(c).empty()) continue;
+        FILE* f = popen(strcmp(c, "xclip") ? c : "xclip -selection clipboard", "w");
+        if (!f) return false;
+        fwrite(text.data(), 1, text.size(), f);
+        return pclose(f) == 0;
+    }
+    return false;
 }
 
 static bool save_markdown(const std::vector<Json>& msgs, const std::string& path, std::string& err) {
@@ -307,6 +327,37 @@ static bool save_markdown(const std::vector<Json>& msgs, const std::string& path
             md += "```\n" + c + "\n```\n\n";
     }
     return write_file(path, md, err);
+}
+
+// The .json twin of a saved Markdown file holds the messages for /resume.
+static std::string json_twin(const std::string& path) {
+    return (ends_with(path, ".md") ? path.substr(0, path.size() - 3) : path) + ".json";
+}
+
+static bool save_json(const std::vector<Json>& msgs, const std::string& path, std::string& err) {
+    Json all = Json::array();
+    for (size_t i = 1; i < msgs.size(); ++i)  // the system prompt is rebuilt on resume
+        all.push(msgs[i]);
+    return write_file(json_twin(path), all.dump(), err);
+}
+
+static bool load_conversation(std::string path, std::vector<Json>& out, std::string& err) {
+    if (path.empty()) {  // names carry a timestamp, so the largest is the newest
+        if (DIR* d = opendir(".")) {
+            while (dirent* e = readdir(d)) {
+                std::string n = e->d_name;
+                if (starts_with(n, "clil-") && ends_with(n, ".json") && n > path) path = n;
+            }
+            closedir(d);
+        }
+        if (path.empty()) return err = "no clil-*.json here (see /save)", false;
+    }
+    std::string text;
+    Json j;
+    if (!read_file(json_twin(path), text, err)) return false;
+    if (!Json::parse(text, j) || !j.is_arr()) return err = json_twin(path) + " is not a saved conversation", false;
+    out = j.items();
+    return true;
 }
 
 static void download(App& app, const std::string& model) {
@@ -530,6 +581,56 @@ bool App::command(const std::string& line) {
                         !m.supported ? "(remote url servers are not supported)"
                         : m.connected ? plural(m.tools, "tool").c_str() : "");
         }
+    } else if (cmd == "/status") {
+        clil_peer p[32];
+        std::string mcp;
+        for (auto& m : mcp_list())
+            if (m.connected) mcp += (mcp.empty() ? "" : ", ") + m.name;
+        printf("server  %s\nmodel   %s%s\nslots   %d\ntools   %s\nmcp     %s\nclil's  %d other\ncwd     %s\n",
+               lm.ep.str().c_str(), cfg.model.empty() ? "(none)" : cfg.model.c_str(),
+               ctx_len ? (" · ctx ~" + human_tokens(estimate_tokens()) + " of " + human_ctx(ctx_len)).c_str() : "",
+               lm.slots > 0 ? lm.slots : lm.model_slots, cfg.tools ? "on" : "off", mcp.empty() ? "-" : mcp.c_str(),
+               std::max(0, clil_peers(p, 32) - 1), cwd().c_str());
+    } else if (cmd == "/stats") {
+        printf("%lld replies · %s prompt + %s completion tokens · %s · %.0fs generating\n", stats.replies,
+               human_tokens(stats.prompt).c_str(), human_tokens(stats.completion).c_str(),
+               stats.secs > 0.05 ? fmt("%.1f tok/s", (double)stats.completion / stats.secs).c_str() : "- tok/s",
+               stats.secs);
+    } else if (cmd == "/copy") {
+        std::string last;
+        for (size_t i = msgs.size(); i-- > 0 && last.empty();)
+            if (msgs[i]["role"].str() == "assistant") last = msgs[i]["content"].str();
+        if (last.empty()) return note("no reply to copy yet"), true;
+        if (clipboard(last))
+            note(fmt("copied %s", plural(count_lines(last), "line").c_str()));
+        else
+            error("could not copy: needs pbcopy, wl-copy or xclip");
+    } else if (cmd == "/init") {
+        std::string err;
+        if (!is_file("CLIL.md")) {
+            if (write_file("CLIL.md",
+                           "# Instructions for clil\n\n"
+                           "Write your own instructions for clil here; they are added to the system prompt in this "
+                           "project.\nFor instructions in every project, use ~/.clil/CLIL.md.\n\n"
+                           "- Example: answer in Dutch.\n- Example: run `make test` after every change.\n",
+                           err))
+                note("created CLIL.md: put your own instructions in it");
+            else
+                error("could not write CLIL.md: " + err);
+            if (!msgs.empty()) msgs[0].set("content", system_prompt());
+        }
+        if (is_file("AGENTS.md")) return note("AGENTS.md already exists; edit or remove it first"), true;
+        if (!cfg.tools) return error("/init needs tools (/tools) for AGENTS.md"), true;
+        run_turn("Read this project (build files, README, main source directories) and write a concise AGENTS.md in "
+                 "the working directory for coding agents: how to build and test, code layout, conventions to follow. "
+                 "Under 40 lines, no filler. Use the write tool.");
+        if (is_file("AGENTS.md") && !msgs.empty()) msgs[0].set("content", system_prompt());
+    } else if (cmd == "/cd") {
+        if (rest.empty()) return printf("%s\n", cwd().c_str()), true;
+        if (!is_dir(expand_home(rest)) || chdir(expand_home(rest).c_str()) != 0)
+            return error("not a directory: " + rest), true;
+        if (!msgs.empty()) msgs[0].set("content", system_prompt());  // it embeds the cwd and its AGENTS.md
+        note("cwd: " + cwd());
     } else if (cmd == "/tools") {
         cfg.tools = !cfg.tools;
         if (!msgs.empty()) msgs[0].set("content", system_prompt());
@@ -540,6 +641,20 @@ bool App::command(const std::string& line) {
     } else if (cmd == "/think") {
         cfg.think = !cfg.think;
         note(cfg.think ? "showing reasoning" : "hiding reasoning");
+    } else if (cmd == "/undo") {
+        std::vector<std::string> done = tool_undo(err);
+        for (auto& p : done)
+            note("restored " + p);
+        if (!err.empty())
+            error(err);
+        else if (done.empty())
+            note("nothing to undo (only write/edit changes are tracked, not bash)");
+    } else if (cmd == "/diff") {
+        int rc = run_attached({"git", "diff", g_color_out ? "--color=always" : "--no-color"});
+        if (rc == 127)
+            error("git not found");
+        else if (rc)
+            error("not a git repository");
     } else if (cmd == "/save") {
         std::string path = a.size() > 1 ? expand_home(a[1]) : "";
         if (path.empty()) {
@@ -548,10 +663,25 @@ bool App::command(const std::string& line) {
             strftime(buf, sizeof buf, "clil-%Y%m%d-%H%M%S.md", localtime(&t));
             path = buf;
         }
-        if (save_markdown(msgs, path, err))
+        if (save_markdown(msgs, path, err) && save_json(msgs, path, err))
             note("saved " + path);
         else
             error(err);
+    } else if (cmd == "/resume") {
+        std::vector<Json> loaded;
+        if (!load_conversation(a.size() > 1 ? expand_home(a[1]) : "", loaded, err)) return error(err), true;
+        reset_conversation();
+        msgs.insert(msgs.end(), loaded.begin(), loaded.end());
+        note(fmt("resumed %s", plural(loaded.size(), "message").c_str()));
+    } else if (cmd == "/retry") {
+        size_t i = msgs.size();
+        while (i > 1 && msgs[i - 1]["role"].str() != "user")
+            --i;
+        if (i <= 1) return note("nothing to retry"), true;
+        std::string text = msgs[i - 1]["content"].str();
+        msgs.resize(i - 1);  // back to the prefix LM Studio has cached
+        ctx_used = -1, ctx_used_msgs = 0;
+        run_turn(text);
     } else {
         error("unknown command " + a[0] + " (see /help)");
     }

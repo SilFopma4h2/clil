@@ -111,10 +111,19 @@ clil /models                           # any slash command works one-shot too
 | `/ctx` | context usage |
 | `/system [text\|off]` | extra system instructions |
 | `/temp [x\|off]` | temperature |
+| `/status` | server, model, context, slots, MCP servers, other clil's and working directory |
+| `/stats` | replies, tokens, tok/s and generation time this session |
+| `/copy` | copy the last reply to the clipboard (`pbcopy`, `wl-copy` or `xclip`) |
+| `/init` | have the model write an `AGENTS.md` and create a `CLIL.md` template for your own instructions (never overwrites) |
+| `/cd [dir]` | show or change the working directory |
 | `/tools` | toggle tools; off means plain chat with the smallest prompt |
 | `/yes` | toggle auto-approve for `bash` / `write` / `edit` |
 | `/think` | show or hide the model's reasoning |
-| `/save [file]` | save the conversation as Markdown |
+| `/undo` | restore the files the last `write` / `edit` calls changed (not `bash`) |
+| `/diff` | show the working directory's changes (`git diff`) |
+| `/save [file]` | save the conversation as Markdown; a `.json` copy is written next to it for `/resume` |
+| `/resume [file]` | continue a saved conversation (default: the newest `clil-*.json` in this directory) |
+| `/retry` | drop the last reply and send your last message again |
 | `/exit` | quit (Ctrl-D also works) |
 | `!cmd` | run a shell command yourself |
 | `@path` | attach a file to your message (Tab completes paths) |
@@ -171,7 +180,8 @@ In one-shot runs without a terminal, nothing that changes files or runs
 commands is allowed unless you pass `-y`.
 
 If `AGENTS.md` or `CLIL.md` exists in the working directory, clil adds it to
-the system prompt as project instructions.
+the system prompt as project instructions. `~/.clil/CLIL.md` is added the same
+way in every project. `/init` creates a `CLIL.md` template for your own instructions.
 
 ## Keys
 
