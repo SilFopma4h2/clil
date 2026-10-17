@@ -547,6 +547,10 @@ int App::run_turn(const std::string& user_text) {
         if (rep.prompt_tokens >= 0) ctx_used = rep.prompt_tokens + std::max(0LL, rep.completion_tokens);
         gen_tokens += rep.completion_tokens >= 0 ? rep.completion_tokens : rep.deltas;
         gen_secs += rep.gen_secs;
+        ++stats.replies;
+        stats.prompt += std::max(0LL, rep.prompt_tokens);
+        stats.completion += rep.completion_tokens >= 0 ? rep.completion_tokens : rep.deltas;
+        stats.secs += rep.gen_secs;
 
         std::vector<ToolCall> calls = rep.calls;
         if (calls.empty() && cfg.tools) extract_text_tool_calls(clean, calls);

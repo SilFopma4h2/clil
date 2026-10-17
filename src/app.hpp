@@ -37,6 +37,10 @@ public:
     std::set<std::string> failed_changes;  // files whose write/edit failed this turn
     int tty_fd = -1;                       // /dev/tty for approvals, -1 if none
     bool interactive = false;              // REPL (status lines, hints)
+    struct {
+        long long replies = 0, prompt = 0, completion = 0;
+        double secs = 0;
+    } stats;  // session totals for /stats
 
     // models & conversation
     bool refresh_models(std::string& err);

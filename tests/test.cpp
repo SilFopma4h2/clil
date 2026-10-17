@@ -469,6 +469,20 @@ static void test_context_budget() {
     }
 }
 
+static void test_cd(const std::string& dir) {
+    App app;
+    app.reset_conversation();
+    std::string old = cwd();
+    CHECK(make_dirs(dir + "/cdtest"));
+    app.command("/cd " + dir + "/cdtest");
+    CHECK(cwd().find("/cdtest") != std::string::npos);
+    CHECK(app.msgs[0]["content"].str().find("/cdtest") != std::string::npos);  // system prompt follows
+    std::string here = cwd();
+    app.command("/cd " + dir + "/nope");  // not a directory: stays put
+    CHECK_EQ(cwd(), here);
+    CHECK(chdir(old.c_str()) == 0);
+}
+
 static int give_up(void*, int) {
     return 1;
 }
@@ -555,7 +569,8 @@ static void test_mcp(const std::string& dir) {
     ToolOutput o = tool_run("stub__echo", args, 1000, 10);
     CHECK(!o.error);
     CHECK_EQ(o.text, std::string("got {\"x\": 1}"));
-    FILE* pg = popen("pgrep -f '[s]tub.py' | wc -l", "r");  // one server for both clil's
+    // one server for both clil's (only ours: a host from the previous run may still be winding down)
+    FILE* pg = popen(("pgrep -f '" + dir + "/[s]tub.py' | wc -l").c_str(), "r");
     int procs = 0;
     if (pg) {
         if (fscanf(pg, "%d", &procs) != 1) procs = -1;
@@ -596,6 +611,7 @@ int main(int argc, char** argv) {
     test_reply_helpers();
     test_save_resume(dir);
     test_context_budget();
+    test_cd(dir);
     test_state();
     test_mcp(dir);
     run_attached({"rm", "-rf", dir});

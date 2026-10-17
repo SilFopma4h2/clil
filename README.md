@@ -111,6 +111,11 @@ clil /models                           # any slash command works one-shot too
 | `/ctx` | context usage |
 | `/system [text\|off]` | extra system instructions |
 | `/temp [x\|off]` | temperature |
+| `/status` | server, model, context, slots, MCP servers, other clil's and working directory |
+| `/stats` | replies, tokens, tok/s and generation time this session |
+| `/copy` | copy the last reply to the clipboard (`pbcopy`, `wl-copy` or `xclip`) |
+| `/init` | have the model write an `AGENTS.md` for the project (never overwrites one) |
+| `/cd [dir]` | show or change the working directory |
 | `/tools` | toggle tools; off means plain chat with the smallest prompt |
 | `/yes` | toggle auto-approve for `bash` / `write` / `edit` |
 | `/think` | show or hide the model's reasoning |
