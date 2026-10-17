@@ -272,6 +272,8 @@ static const CmdInfo kCmds[] = {
     {"/tools", "toggle tools (off = plain chat, smaller prompts)"},
     {"/yes", "toggle auto-approve for bash/write/edit"},
     {"/think", "toggle showing the model's reasoning"},
+    {"/undo", "restore the files the last write/edit calls changed"},
+    {"/diff", "show the working directory's changes (git diff)"},
     {"/save [file]", "save the conversation as Markdown"},
     {"/help", "show this list"},
     {"/exit", "quit (also Ctrl-D)"},
@@ -540,6 +542,20 @@ bool App::command(const std::string& line) {
     } else if (cmd == "/think") {
         cfg.think = !cfg.think;
         note(cfg.think ? "showing reasoning" : "hiding reasoning");
+    } else if (cmd == "/undo") {
+        std::vector<std::string> done = tool_undo(err);
+        for (auto& p : done)
+            note("restored " + p);
+        if (!err.empty())
+            error(err);
+        else if (done.empty())
+            note("nothing to undo (only write/edit changes are tracked, not bash)");
+    } else if (cmd == "/diff") {
+        int rc = run_attached({"git", "diff", g_color_out ? "--color=always" : "--no-color"});
+        if (rc == 127)
+            error("git not found");
+        else if (rc)
+            error("not a git repository");
     } else if (cmd == "/save") {
         std::string path = a.size() > 1 ? expand_home(a[1]) : "";
         if (path.empty()) {

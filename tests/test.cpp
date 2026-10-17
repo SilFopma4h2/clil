@@ -343,6 +343,27 @@ static void test_tools(const std::string& dir) {
     CHECK(o.text.size() < 2200 && o.text.find("100000") != std::string::npos);
 }
 
+static void test_undo(const std::string& dir) {
+    std::string f = dir + "/undo.txt", err, s;
+    Json a = Json::object();
+    a.set("path", f).set("content", "one\n");
+    tool_new_turn();
+    CHECK(!tool_run("write", a, 1000, 5).error);  // creates the file
+    a.set("content", "two\n");
+    CHECK(!tool_run("write", a, 1000, 5).error);  // same turn: still one backup, of "did not exist"
+    tool_new_turn();
+    Json e = Json::object();
+    e.set("path", f).set("old_string", "two").set("new_string", "three");
+    CHECK(!tool_run("edit", e, 1000, 5).error);
+    CHECK(read_file(f, s, err) && s == "three\n");
+    CHECK_EQ(std::to_string(tool_undo(err).size()), std::string("1"));
+    CHECK(read_file(f, s, err) && s == "two\n");
+    CHECK_EQ(std::to_string(tool_undo(err).size()), std::string("1"));
+    CHECK(!is_file(f));
+    tool_undo(err);  // older groups from the tests above may still be there; f stays gone
+    CHECK(!is_file(f) && err.empty());
+}
+
 static void test_reply_helpers() {
     CHECK_EQ(strip_think("<think>\nplan\n</think>\n\nAnswer"), std::string("Answer"));
     CHECK_EQ(strip_think("plan only\n</think>Answer"), std::string("Answer"));
@@ -553,6 +574,7 @@ int main(int argc, char** argv) {
     test_stream_chat();
     test_models();
     test_tools(dir);
+    test_undo(dir);
     test_reply_helpers();
     test_context_budget();
     test_state();

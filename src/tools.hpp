@@ -24,6 +24,11 @@ std::vector<std::string> tool_change_preview(const std::string& name, const Json
 // `cap` is the maximum number of bytes of output handed back to the model.
 ToolOutput tool_run(const std::string& name, const Json& args, size_t cap, int timeout_s);
 
+// Undo for write/edit: files are backed up before they change. Backups are grouped per turn;
+// tool_undo() restores the newest group and returns the paths (errors are appended to `err`).
+void tool_new_turn();
+std::vector<std::string> tool_undo(std::string& err);
+
 // Exposed for tests.
 ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s, size_t cap = 4000);
 ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap);

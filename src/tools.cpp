@@ -208,6 +208,49 @@ static ToolOutput edit_fail(const std::string& path, const std::string& why, con
     return o;
 }
 
+namespace {
+struct Backup {
+    std::string path, data;
+    bool existed;
+};
+std::vector<std::vector<Backup>> g_undo;  // one group per turn that changed files, oldest first
+bool g_new_turn = true;
+
+void backup(const std::string& p) {
+    if (g_new_turn) {
+        g_undo.emplace_back();
+        g_new_turn = false;
+        if (g_undo.size() > 10) g_undo.erase(g_undo.begin());
+    }
+    for (auto& b : g_undo.back())
+        if (b.path == p) return;  // keep the state from before the turn
+    Backup b{p, "", is_file(p)};
+    std::string err;
+    if (b.existed) read_file(p, b.data, err);
+    g_undo.back().push_back(b);
+}
+}  // namespace
+
+void tool_new_turn() {
+    g_new_turn = true;
+}
+
+std::vector<std::string> tool_undo(std::string& err) {
+    std::vector<std::string> done;
+    if (g_undo.empty()) return done;
+    std::vector<Backup> group = std::move(g_undo.back());
+    g_undo.pop_back();
+    g_new_turn = true;
+    for (auto& b : group) {
+        std::string e;
+        if (b.existed ? write_file(b.path, b.data, e) : unlink(b.path.c_str()) == 0 || errno == ENOENT)
+            done.push_back(b.path);
+        else
+            err += (err.empty() ? "" : "; ") + (e.empty() ? b.path + ": " + strerror(errno) : e);
+    }
+    return done;
+}
+
 ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s, size_t cap) {
     std::string p = expand_home(path);
     if (p.empty()) return fail("missing 'path'");
@@ -263,6 +306,7 @@ ToolOutput run_edit(const std::string& path, const std::string& old_s, const std
             repl.erase(0, 1);
     }
     data.replace(at, len, repl);
+    backup(p);
     if (!write_file(p, data, err)) return fail(err);
     size_t line = 1 + (size_t)std::count(data.begin(), data.begin() + (long)at, '\n');
     ToolOutput o;
@@ -498,6 +542,7 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
         if (!has) return fail("missing 'content'");
         std::string p = expand_home(path), err;
         bool existed = is_file(p);
+        backup(p);
         if (!write_file(p, content, err)) return fail(err);
         ToolOutput o;
         o.text = fmt("%s %s (%s)", existed ? "Overwrote" : "Created", path.c_str(),

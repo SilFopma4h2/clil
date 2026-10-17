@@ -114,6 +114,8 @@ clil /models                           # any slash command works one-shot too
 | `/tools` | toggle tools; off means plain chat with the smallest prompt |
 | `/yes` | toggle auto-approve for `bash` / `write` / `edit` |
 | `/think` | show or hide the model's reasoning |
+| `/undo` | restore the files the last `write` / `edit` calls changed (not `bash`) |
+| `/diff` | show the working directory's changes (`git diff`) |
 | `/save [file]` | save the conversation as Markdown |
 | `/exit` | quit (Ctrl-D also works) |
 | `!cmd` | run a shell command yourself |

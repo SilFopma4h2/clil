@@ -492,6 +492,7 @@ int App::run_turn(const std::string& user_text) {
     if (!ensure_model_ready()) return 1;
 
     failed_changes.clear();
+    tool_new_turn();
     fit_context(false, user_text.size());
     size_t turn_start = msgs.size();
     msgs.push_back(message("user", user_text));
