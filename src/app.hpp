@@ -8,6 +8,7 @@
 
 #include "json.hpp"
 #include "lmstudio.hpp"
+#include "state.h"
 
 #define CLIL_VERSION "0.1.0"
 
@@ -25,6 +26,7 @@ struct Settings {
 class App {
 public:
     LMStudio lm;
+    std::vector<Endpoint> hosts;  // LM Studio servers to balance over (lm.ep is the current one)
     Settings cfg;
     std::vector<Json> msgs;  // OpenAI-format conversation, msgs[0] is the system prompt
     std::vector<ModelInfo> models;
@@ -41,6 +43,8 @@ public:
     const ModelInfo* find_model(const std::string& name, std::string* err = nullptr) const;
     std::string resolve_model(const std::string& name, std::string* err = nullptr) const;  // fuzzy -> exact id
     void select_model(const std::string& id);
+    void announce(int state = CLIL_IDLE) const { clil_set(lm.ep.str().c_str(), cfg.model.c_str(), state); }
+    bool pick_host();  // least loaded server that has the model; true if it changed
     void pick_default_model();
     bool load_model(const std::string& key, int ctx);
     bool ensure_model_ready();

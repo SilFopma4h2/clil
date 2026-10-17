@@ -1,8 +1,8 @@
 #include "lmstudio.hpp"
+#include "state.h"
 #include "util.hpp"
 
 #include <cstring>
-#include <map>
 
 bool is_missing_endpoint(int status, const Json& body) {
     if (status == 404 && !body["error"]["type"].is_str()) return true;
@@ -50,7 +50,10 @@ bool LMStudio::list_models(std::vector<ModelInfo>& out, std::string& err) {
             mi.tools = m["capabilities"]["trained_for_tool_use"].boolean();
             mi.vision = m["capabilities"]["vision"].boolean();
             for (auto& li : m["loaded_instances"].items())
+            {
                 mi.loaded.emplace_back(li["id"].str(), (int)li["config"]["context_length"].integer());
+                mi.parallel = (int)li["config"]["parallel"].integer(mi.parallel);
+            }
             out.push_back(std::move(mi));
         }
         return true;
@@ -135,8 +138,28 @@ bool LMStudio::download_status(const std::string& job, Json& res, std::string& e
 
 ChatReply LMStudio::chat(const std::string& body, const ChatEvents& ev) {
     ChatReply rep;
-    std::string pending;               // bytes after the last complete SSE line
-    std::map<long long, size_t> slot;  // tool call stream index -> position in rep.calls
+    // One request at a time per server slot across all clil's, first come first served.
+    struct Hold {
+        ~Hold() { clil_release(); }
+    } hold;
+    bool waited = false;
+    auto wait = [&](int ahead) {
+        waited = true;
+        if (ev.queued)
+            ev.queued(ahead);
+        else if (ev.tick)
+            ev.tick();
+        return g_interrupted ? 1 : 0;
+    };
+    using Wait = decltype(wait);
+    if (clil_acquire(ep.str().c_str(), slots > 0 ? slots : model_slots, [](void* c, int ahead) { return (*(Wait*)c)(ahead); }, &wait)) {
+        rep.interrupted = true;
+        return rep;
+    }
+    if (waited && ev.queued) ev.queued(0);
+
+    std::string pending;                                // bytes after the last complete SSE line
+    std::vector<std::pair<long long, size_t>> slot;  // tool call stream index -> position in rep.calls
     bool done = false;
     double t0 = now_secs(), t_first = 0;
 
@@ -182,12 +205,14 @@ ChatReply LMStudio::chat(const std::string& body, const ChatEvents& ev) {
         for (size_t i = 0; i < tcs.size(); ++i) {
             const Json& tc = tcs[i];
             long long idx = tc["index"].integer((long long)i);
-            auto it = slot.find(idx);
-            if (it == slot.end()) {
-                it = slot.emplace(idx, rep.calls.size()).first;
+            size_t pos = slot.size();
+            for (size_t k = 0; k < slot.size(); ++k)
+                if (slot[k].first == idx) pos = k;
+            if (pos == slot.size()) {
+                slot.emplace_back(idx, rep.calls.size());
                 rep.calls.emplace_back();
             }
-            ToolCall& call = rep.calls[it->second];
+            ToolCall& call = rep.calls[slot[pos].second];
             if (call.id.empty()) call.id = tc["id"].str();
             if (call.name.empty()) call.name = tc["function"]["name"].str();
             const Json& a = tc["function"]["arguments"];

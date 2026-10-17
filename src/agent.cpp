@@ -214,6 +214,10 @@ bool App::compact(bool automatic) {
     sp.start("compacting conversation");
     ChatEvents ev;
     ev.tick = [&] { sp.tick(); };
+    ev.queued = [&](int n) {
+        sp.label(n ? fmt("waiting for %s", plural((size_t)n, "other clil").c_str()) : "compacting conversation");
+        sp.tick();
+    };
     ChatReply rep = lm.chat(build_body(cfg.tools, &ask, 1024), ev);
     sp.stop();
     std::string summary = strip_think(rep.content);
@@ -514,6 +518,10 @@ int App::run_turn(const std::string& user_text) {
             sp.tick();
         };
         ev.tick = [&] { sp.tick(); };
+        ev.queued = [&](int n) {
+            sp.label(n ? fmt("waiting for %s", plural((size_t)n, "other clil").c_str()) : step ? "working" : "thinking");
+            sp.tick();
+        };
         ChatReply rep = lm.chat(build_body(cfg.tools), ev);
         sp.stop();
         pr.finish();

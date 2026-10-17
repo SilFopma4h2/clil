@@ -13,6 +13,7 @@ struct ModelInfo {
     std::string key, display, type, arch, quant, format, params;
     long long size = 0;
     int max_ctx = 0;
+    int parallel = 0;  // concurrent predictions of the loaded instance (0: unknown)
     bool tools = false, vision = false;
     std::vector<std::pair<std::string, int>> loaded;  // instance id, context length
 };
@@ -35,6 +36,7 @@ struct ChatEvents {
     std::function<void(const std::string&)> content, reasoning;
     std::function<void(const ToolCall&)> tool_progress;  // a tool call is being streamed
     std::function<void()> tick;
+    std::function<void(int)> queued;  // waiting behind N other clil's; 0 when our turn starts
 };
 
 struct LoadResult {
@@ -46,6 +48,8 @@ struct LoadResult {
 class LMStudio {
 public:
     Endpoint ep;
+    int slots = 0;        // requests per server that clil's run at once; 0: what the loaded model allows
+    int model_slots = 1;  // that, as reported by LM Studio ("parallel")
     int api = -1;  // detected API: 1 = /api/v1, 0 = /api/v0, 2 = plain OpenAI server, -1 unknown
 
     bool list_models(std::vector<ModelInfo>& out, std::string& err);

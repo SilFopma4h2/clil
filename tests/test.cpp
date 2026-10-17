@@ -5,12 +5,14 @@
 #include "json.hpp"
 #include "lmstudio.hpp"
 #include "mcp.hpp"
+#include "state.h"
 #include "tools.hpp"
 #include "util.hpp"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <csignal>
@@ -428,6 +430,49 @@ static void test_context_budget() {
     }
 }
 
+static int give_up(void*, int) {
+    return 1;
+}
+
+// Other clil's are simulated with forked children that open their own slot.
+static void test_state() {
+    clil_set("h:1", "m", CLIL_IDLE);
+    int ready[2];
+    CHECK(pipe(ready) == 0);
+    pid_t pid = fork();
+    if (pid == 0) {
+        clil_close();
+        clil_open(nullptr);
+        clil_set("h:1", "m", CLIL_IDLE);
+        int rc = clil_acquire("h:1", 1, nullptr, nullptr);
+        char c = rc == 0 ? 'k' : 'x';
+        (void)!write(ready[1], &c, 1);
+        sleep(2);
+        _exit(0);
+    }
+    char c = 0;
+    CHECK(read(ready[0], &c, 1) == 1 && c == 'k');
+    CHECK_EQ(std::to_string(clil_users("h:1", "m")), std::string("1"));
+    CHECK_EQ(std::to_string(clil_users("h:1", "other")), std::string("0"));
+    CHECK_EQ(std::to_string(clil_users("h:2", nullptr)), std::string("0"));
+    CHECK_EQ(std::to_string(clil_busy("h:1")), std::string("1"));
+    clil_peer peers[8];
+    CHECK_EQ(std::to_string(clil_peers(peers, 8)), std::string("2"));
+    CHECK(clil_acquire("h:1", 1, give_up, nullptr) == -1);  // the only slot is taken
+    CHECK(clil_acquire("h:1", 2, give_up, nullptr) == 0);   // a second one is free
+    clil_release();
+    int lock = clil_lock("load h:1", nullptr, nullptr);
+    CHECK(lock >= 0);
+    clil_unlock(lock);
+    kill(pid, SIGKILL);
+    waitpid(pid, nullptr, 0);
+    CHECK_EQ(std::to_string(clil_users("h:1", "m")), std::string("0"));  // dead instances vanish
+    CHECK(clil_acquire("h:1", 1, give_up, nullptr) == 0);
+    clil_release();
+    close(ready[0]);
+    close(ready[1]);
+}
+
 static void test_mcp(const std::string& dir) {
     // a stub stdio server: initialize, tools/list, tools/call (echo)
     std::string stub =
@@ -450,7 +495,19 @@ static void test_mcp(const std::string& dir) {
     auto list = mcp_list();
     CHECK(list.size() == 2);
     CHECK(!mcp_connect("remote", err));
-    CHECK(mcp_connect("stub", err));
+    // A second "clil" connects first (no cache yet: starts the shared host), then we join it.
+    pid_t pid = fork();
+    if (pid == 0) {
+        std::string e;
+        Json a = Json::object();
+        bool ok = mcp_connect("stub", e) && !tool_run("stub__echo", a, 1000, 10).error;
+        _exit(ok ? 0 : 1);
+    }
+    int st = 0;
+    waitpid(pid, &st, 0);
+    CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0);
+    CHECK(is_file(dir + "/home/.clil/mcp-cache.json"));
+    CHECK(mcp_connect("stub", err));  // cache hit: nothing runs until the first call
     CHECK(mcp_owns("stub__echo"));
     CHECK(tool_mutates("stub__echo"));
     CHECK(mcp_schemas().size() == 1);
@@ -459,15 +516,38 @@ static void test_mcp(const std::string& dir) {
     ToolOutput o = tool_run("stub__echo", args, 1000, 10);
     CHECK(!o.error);
     CHECK_EQ(o.text, std::string("got {\"x\": 1}"));
+    FILE* pg = popen("pgrep -f '[s]tub.py' | wc -l", "r");  // one server for both clil's
+    int procs = 0;
+    if (pg) {
+        if (fscanf(pg, "%d", &procs) != 1) procs = -1;
+        pclose(pg);
+    }
+    CHECK_EQ(std::to_string(procs), std::string("1"));
     CHECK(mcp_disconnect("stub"));
+    // A cached server that no longer starts: the call explains, and the cache entry goes.
+    setenv("CLIL_MCP_SHARE", "0", 1);  // the shared host from above may still be up
+    CHECK(mcp_connect("stub", err));
+    CHECK(rename((dir + "/stub.py").c_str(), (dir + "/stub.bak").c_str()) == 0);
+    o = tool_run("stub__echo", args, 1000, 10);
+    CHECK(o.error && o.text.find("failed to start") != std::string::npos);
+    std::string cache;
+    CHECK(read_file(dir + "/home/.clil/mcp-cache.json", cache, err) && cache.find("\"stub\"") == std::string::npos);
+    CHECK(mcp_disconnect("stub"));
+    CHECK(!mcp_connect("stub", err));  // no cache now: starts eagerly and reports the failure
+    CHECK(rename((dir + "/stub.bak").c_str(), (dir + "/stub.py").c_str()) == 0);
+    unsetenv("CLIL_MCP_SHARE");
     CHECK(!mcp_owns("stub__echo"));
     CHECK(mcp_schemas().size() == 0);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 2 && !strcmp(argv[1], "--mcp-host")) return mcp_host_main(argv[2]);  // see attach() in mcp.cpp
     signal(SIGPIPE, SIG_IGN);
     char tmpl[] = "/tmp/clil-test-XXXXXX";
     std::string dir = mkdtemp(tmpl);
+    setenv("CLIL_RUN", (dir + "/run").c_str(), 1);
+    setenv("CLIL_MCP_IDLE", "3", 1);
+    CHECK(clil_open(nullptr) == 0);
     test_json();
     test_util();
     test_stream_chat();
@@ -475,6 +555,7 @@ int main() {
     test_tools(dir);
     test_reply_helpers();
     test_context_budget();
+    test_state();
     test_mcp(dir);
     run_attached({"rm", "-rf", dir});
     printf("%d passed, %d failed\n", g_pass, g_fail);

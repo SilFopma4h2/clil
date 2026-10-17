@@ -1,23 +1,29 @@
-# clil — `make` builds ./clil. Needs only a C++17 compiler (Xcode Command Line Tools on macOS).
+# clil — `make` builds ./clil. Needs only a C11/C++17 compiler (Xcode Command Line Tools on macOS).
 CXX      ?= c++
+CC       ?= cc
 PREFIX   ?= /usr/local
 ARCH     ?=
-CXXFLAGS ?= -Os
+CXXFLAGS ?= -Oz
+CFLAGS   ?= -Oz
 LDFLAGS  ?=
 
 # Required flags live apart from CXXFLAGS so `make CXXFLAGS=...` can't drop them.
-FLAGS := -std=c++17 -Wall -Wextra -fno-exceptions -fno-rtti -ffunction-sections -fdata-sections -MMD -MP
+COMMON := -Wall -Wextra -ffunction-sections -fdata-sections -MMD -MP
+FLAGS  := -std=c++17 -fno-exceptions -fno-rtti $(COMMON)
+CFLAG  := -std=c11 -D_GNU_SOURCE $(COMMON)
 
 ifeq ($(shell uname -s),Darwin)
   FLAGS += -flto -mmacosx-version-min=11.0
+  CFLAG += -flto -mmacosx-version-min=11.0
   LINK  := -flto -mmacosx-version-min=11.0 -Wl,-dead_strip
 else
   FLAGS += -flto=auto
+  CFLAG += -flto=auto
   LINK  := -flto=auto -Wl,--gc-sections
 endif
 
 SRC  := $(wildcard src/*.cpp)
-OBJ  := $(SRC:src/%.cpp=build/%.o)
+OBJ  := $(SRC:src/%.cpp=build/%.o) $(patsubst src/%.c,build/%.o,$(wildcard src/*.c))
 LIB  := $(filter-out build/main.o,$(OBJ))
 
 clil: $(OBJ)
@@ -26,6 +32,9 @@ clil: $(OBJ)
 
 build/%.o: src/%.cpp | build
 	$(CXX) $(ARCH) $(FLAGS) $(CXXFLAGS) -c -o $@ $<
+
+build/%.o: src/%.c | build
+	$(CC) $(ARCH) $(CFLAG) $(CFLAGS) -c -o $@ $<
 
 build/test.o: tests/test.cpp | build
 	$(CXX) $(ARCH) $(FLAGS) $(CXXFLAGS) -Isrc -c -o $@ $<

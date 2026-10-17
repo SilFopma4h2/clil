@@ -23,3 +23,7 @@ bool mcp_owns(const std::string& tool);
 const Json& mcp_schemas();  // OpenAI tool entries of all connected servers
 int mcp_generation();       // bumps whenever the tool set changes
 ToolOutput mcp_call(const std::string& tool, const Json& args, size_t cap, int timeout_s);
+
+// Entry point of `clil --mcp-host NAME`: runs the server once and shares it with every clil
+// that connects over a unix socket; exits after CLIL_MCP_IDLE seconds (default 300) without clients.
+int mcp_host_main(const std::string& name);
