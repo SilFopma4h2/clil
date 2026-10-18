@@ -1,4 +1,5 @@
 #include "tools.hpp"
+#include "ide.hpp"
 #include "mcp.hpp"
 #include "util.hpp"
 
@@ -144,7 +145,7 @@ ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap
         return o;
     }
     std::string data, err;
-    if (!read_file(p, data, err)) return fail(err);
+    if (!ide_read(p, data) && !read_file(p, data, err)) return fail(err);
     if (memchr(data.data(), 0, std::min<size_t>(data.size(), 8192))) {
         o.text = fmt("(binary file, %zu bytes, not shown)", data.size());
         o.summary = "binary file";
@@ -251,12 +252,18 @@ std::vector<std::string> tool_undo(std::string& err) {
     return done;
 }
 
+// Inside SF-IDE the editor applies the change to its open tab and saves it.
+static bool save(const std::string& p, const std::string& data, std::string& err) {
+    if (ide_write(p, data, err)) return err.empty();
+    return write_file(p, data, err);
+}
+
 ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s, size_t cap) {
     std::string p = expand_home(path);
     if (p.empty()) return fail("missing 'path'");
     if (old_s.empty()) return fail("old_string is empty; use write to create a file");
     std::string data, err;
-    if (!read_file(p, data, err)) return fail(err + "; the file was NOT changed");
+    if (!ide_read(p, data) && !read_file(p, data, err)) return fail(err + "; the file was NOT changed");
 
     size_t at = std::string::npos, n = 0;
     for (size_t f = data.find(old_s); f != std::string::npos; f = data.find(old_s, f + 1))
@@ -307,7 +314,7 @@ ToolOutput run_edit(const std::string& path, const std::string& old_s, const std
     }
     data.replace(at, len, repl);
     backup(p);
-    if (!write_file(p, data, err)) return fail(err);
+    if (!save(p, data, err)) return fail(err);
     size_t line = 1 + (size_t)std::count(data.begin(), data.begin() + (long)at, '\n');
     ToolOutput o;
     o.text = fmt("Edited %s at line %zu (-%zu +%zu lines)", path.c_str(), line, count_lines(old_s), count_lines(new_s));
@@ -543,7 +550,7 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
         std::string p = expand_home(path), err;
         bool existed = is_file(p);
         backup(p);
-        if (!write_file(p, content, err)) return fail(err);
+        if (!save(p, content, err)) return fail(err);
         ToolOutput o;
         o.text = fmt("%s %s (%s)", existed ? "Overwrote" : "Created", path.c_str(),
                      plural(count_lines(content), "line").c_str());

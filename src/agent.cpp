@@ -1,5 +1,6 @@
 // The agent loop: stream a reply, run the tools it asks for, repeat.
 #include "app.hpp"
+#include "ide.hpp"
 #include "term.hpp"
 #include "mcp.hpp"
 #include "tools.hpp"
@@ -56,6 +57,10 @@ std::string App::system_prompt() const {
             "- If a tool returns Error, fix the call and retry; never claim success after an error.\n"
             "- Shell commands must be non-interactive.\n"
             "- Be brief. When done, say in 1-3 lines what you did.";
+        if (ide_attached())
+            s += "\n- You run inside the SF-IDE editor: write/edit show up live in the user's open tabs and read "
+                 "returns the editor's current text, unsaved edits included. A message may end with [SF-IDE: ...] "
+                 "saying which file and selection the user has open; use it for \"this file\" or \"the selection\".";
     } else {
         s = "You are clil, a concise assistant in the user's terminal (" + os + ", " + date +
             "). Answer briefly; put code in fenced blocks.";
@@ -274,6 +279,23 @@ public:
     }
 
     void reasoning(const std::string& s) { think(s); }
+
+    // Ends an unfinished line before the spinner draws: the spinner starts with
+    // "\r\x1b[K", which would otherwise erase the last (wrapped) row of text.
+    void break_line() {
+        if (in_think_ || !tag_.empty()) return;
+        if (line_start_ && !head_.empty()) flush_head();
+        if (answered_ && !answer_nl_) {
+            end_line();
+            fputc('\n', stdout);
+            fflush(stdout);
+            answer_nl_ = true;
+        }
+        if (thought_ && show_ && !think_nl_) {
+            fputc('\n', stderr);
+            think_nl_ = true;
+        }
+    }
 
     void finish() {
         if (!tag_.empty()) route(tag_), tag_.clear();
@@ -514,7 +536,10 @@ int App::run_turn(const std::string& user_text) {
         ev.content = [&](const std::string& s) { pr.content(s); };
         ev.reasoning = [&](const std::string& s) { pr.reasoning(s); };
         ev.tool_progress = [&](const ToolCall& c) {
-            if (!sp.active()) sp.start("");
+            if (!sp.active()) {
+                pr.break_line();
+                sp.start("");
+            }
             sp.label(fmt("%s … %s", c.name.c_str(), human_bytes((double)c.args.size()).c_str()));
             sp.tick();
         };
