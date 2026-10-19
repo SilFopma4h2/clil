@@ -1,5 +1,6 @@
 // clil — a small, fast terminal coding agent for LM Studio.
 #include "app.hpp"
+#include "ide.hpp"
 #include "mcp.hpp"
 #include "term.hpp"
 #include "util.hpp"
@@ -253,7 +254,7 @@ int main(int argc, char** argv) {
         } else if (t[0] == '!') {
             run_attached({"/bin/sh", "-c", t.substr(1)});
         } else {
-            app.run_turn(app.expand_mentions(line));
+            app.run_turn(app.expand_mentions(line) + ide_context());
         }
         fputc('\n', stderr);
     }
