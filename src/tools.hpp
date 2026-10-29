@@ -31,6 +31,7 @@ std::vector<std::string> tool_undo(std::string& err);
 
 // Exposed for tests.
 ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s, size_t cap = 4000);
+ToolOutput run_insert(const std::string& path, long line, const std::string& text, size_t cap = 4000);
 ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap);
 ToolOutput run_search(const std::string& pattern, const std::string& path, const std::string& glob, bool icase,
                       size_t cap);

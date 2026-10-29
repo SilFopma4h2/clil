@@ -449,7 +449,7 @@ std::string App::exec_tool(const ToolCall& c, bool& stop) {
     fprintf(stderr, "%s%s\n", head.c_str(), utf8_clip(title, room).c_str());
     if (!parsed)
         return "Error: arguments are not a valid JSON object (" + perr + "). Call the tool again with valid JSON.";
-    if (!tool_known(c.name)) return "Error: unknown tool '" + c.name + "'; available: bash, read, search, write, edit.";
+    if (!tool_known(c.name)) return "Error: unknown tool '" + c.name + "'; available: bash, read, search, write, edit, insert.";
 
     if (tool_mutates(c.name)) {
         for (auto& l : tool_change_preview(c.name, args)) {
@@ -466,7 +466,7 @@ std::string App::exec_tool(const ToolCall& c, bool& stop) {
         if (v == 0) return feedback;
     }
     ToolOutput o = tool_run(c.name, args, tool_cap(), cfg.timeout_s);
-    if (c.name == "write" || c.name == "edit") {
+    if (c.name == "write" || c.name == "edit" || c.name == "insert") {
         std::string path = args["path"].str();
         if (o.error)
             failed_changes.insert(path);

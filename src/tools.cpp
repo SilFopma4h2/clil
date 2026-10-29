@@ -20,7 +20,8 @@ static const char* kSchemas = R"([
 {"type":"function","function":{"name":"read","description":"Read a text file, or list a directory.","parameters":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","description":"first line, 1-based"},"limit":{"type":"integer","description":"max lines"}},"required":["path"]}}},
 {"type":"function","function":{"name":"search","description":"Search file contents recursively with a regex (POSIX extended). Without pattern, list files matching glob. Skips .git, node_modules, build and binary files.","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","description":"directory or file, default ."},"glob":{"type":"string","description":"file name filter, e.g. *.cpp"},"ignore_case":{"type":"boolean"}}}}},
 {"type":"function","function":{"name":"write","description":"Create or overwrite a file.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
-{"type":"function","function":{"name":"edit","description":"Replace one exact, unique occurrence of old_string in a file with new_string.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}}}
+{"type":"function","function":{"name":"insert","description":"Insert text after a line number (0 = top of file). Preferred way to ADD code: no old_string needed. Line numbers come from read.","parameters":{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer","description":"insert after this line; 0 = at the start"},"text":{"type":"string"}},"required":["path","line","text"]}}},
+{"type":"function","function":{"name":"edit","description":"Replace one exact, unique occurrence of old_string in a file with new_string. Use a short old_string (1-5 lines), without line-number prefixes. To only add code, use insert.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}}}
 ])";
 
 Json tool_schemas() {
@@ -32,10 +33,10 @@ Json tool_schemas() {
 }
 
 bool tool_mutates(const std::string& n) {
-    return n == "bash" || n == "write" || n == "edit" || mcp_owns(n);
+    return n == "bash" || n == "write" || n == "edit" || n == "insert" || mcp_owns(n);
 }
 bool tool_known(const std::string& n) {
-    return n == "bash" || n == "read" || n == "search" || n == "write" || n == "edit" || mcp_owns(n);
+    return n == "bash" || n == "read" || n == "search" || n == "write" || n == "edit" || n == "insert" || mcp_owns(n);
 }
 
 // Small models drift on argument names; accept the common aliases.
@@ -97,11 +98,12 @@ std::string tool_title(const std::string& name, const Json& a) {
         return t + (g.empty() ? "" : "  " + g) + (path.empty() ? "" : "  in " + path);
     }
     if (name == "write") return path + " (" + plural(count_lines(arg_str(a, {"content", "text"})), "line") + ")";
+    if (name == "insert") return path + fmt(" after line %ld", arg_long(a, "line", 0));
     return path;
 }
 
 std::vector<std::string> tool_change_preview(const std::string& name, const Json& a) {
-    if (name == "write") return marked(arg_str(a, {"content", "text"}), "+ ", 8);
+    if (name == "write" || name == "insert") return marked(arg_str(a, {"content", "text"}), "+ ", 8);
     if (name == "edit") {
         auto out = marked(arg_str(a, {"old_string", "old"}), "- ", 8);
         auto add = marked(arg_str(a, {"new_string", "new"}), "+ ", 8);
@@ -159,7 +161,7 @@ ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap
         std::string l = lines[(size_t)i];
         if (l.size() > 500) l = utf8_clip(l, 500);
         if (o.text.size() + l.size() + 1 > cap) break;
-        o.text += l + "\n";
+        o.text += fmt("%ld│", i + 1) + l + "\n";
     }
     long shown = i - (first - 1);
     if (total == 0)
@@ -251,7 +253,55 @@ std::vector<std::string> tool_undo(std::string& err) {
     return done;
 }
 
-ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s, size_t cap) {
+// Models copy read's "12│" line-number prefixes into their edits; drop them when every line has one.
+static std::string strip_line_numbers(const std::string& s) {
+    auto lines = split_lines(s);
+    std::string out;
+    size_t seen = 0;
+    for (auto& l : lines) {
+        size_t i = 0;
+        while (i < l.size() && isdigit((unsigned char)l[i])) ++i;
+        bool has = i > 0 && l.compare(i, 3, "│") == 0;
+        if (!has && !trim(l).empty()) return s;
+        if (has) ++seen;
+        out += has ? l.substr(i + 3) : l;
+        out += '\n';
+    }
+    if (!seen) return s;
+    if (s.back() != '\n') out.pop_back();
+    return out;
+}
+
+ToolOutput run_insert(const std::string& path, long line, const std::string& text, size_t cap) {
+    std::string p = expand_home(path);
+    if (p.empty()) return fail("missing 'path'");
+    if (text.empty()) return fail("missing 'text'");
+    std::string data, err;
+    if (!read_file(p, data, err)) return fail(err + "; the file was NOT changed");
+    auto lines = split_lines(data);
+    if (line < 0 || line > (long)lines.size())
+        return fail(fmt("line %ld is out of range: %s has %zu lines. The file was NOT changed. Use read to get line numbers",
+                        line, path.c_str(), lines.size()));
+    std::string ins = strip_line_numbers(text);
+    if (ins.back() != '\n') ins += '\n';
+    size_t at = 0;  // byte offset just after line `line`
+    for (long i = 0; i < line; ++i) {
+        size_t nl = data.find('\n', at);
+        at = nl == std::string::npos ? data.size() : nl + 1;
+    }
+    if (at == data.size() && at > 0 && data.back() != '\n') ins = "\n" + ins;
+    data.insert(at, ins);
+    backup(p);
+    if (!write_file(p, data, err)) return fail(err);
+    (void)cap;
+    ToolOutput o;
+    o.text = fmt("Inserted %zu lines into %s after line %ld", count_lines(ins), path.c_str(), line);
+    o.summary = fmt("after line %ld: +%zu lines", line, count_lines(ins));
+    return o;
+}
+
+ToolOutput run_edit(const std::string& path, const std::string& old_in, const std::string& new_in, size_t cap) {
+    std::string old_s = strip_line_numbers(old_in), new_s = strip_line_numbers(new_in);
     std::string p = expand_home(path);
     if (p.empty()) return fail("missing 'path'");
     if (old_s.empty()) return fail("old_string is empty; use write to create a file");
@@ -550,11 +600,18 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
         o.summary = std::string(existed ? "overwrote · " : "created · ") + plural(count_lines(content), "line");
         return o;
     }
+    if (name == "insert") {
+        bool has = false;
+        std::string text = arg_str(a, {"text", "content", "new_string"}, &has);
+        if (!has) return fail("missing 'text'");
+        if (!a["line"].is_num() && !a["line"].is_str()) return fail("missing 'line' (insert after this line number; 0 = start)");
+        return run_insert(path, arg_long(a, "line", 0), text, cap);
+    }
     if (name == "edit") {
         bool has_new = false;
         std::string nw = arg_str(a, {"new_string", "new"}, &has_new);
         if (!has_new) return fail("missing 'new_string'");
         return run_edit(path, arg_str(a, {"old_string", "old"}), nw, cap);
     }
-    return fail("unknown tool '" + name + "'; available: bash, read, search, write, edit");
+    return fail("unknown tool '" + name + "'; available: bash, read, search, write, edit, insert");
 }

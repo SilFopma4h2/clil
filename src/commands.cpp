@@ -271,6 +271,7 @@ static const CmdInfo kCmds[] = {
     {"/mcp [connect|disconnect <name>]", "list or connect MCP servers from ~/.lmstudio/mcp.json"},
     {"/status", "server, model, context, slots, MCP and other clil's at a glance"},
     {"/stats", "tokens, speed and generation time this session"},
+    {"/doctor", "check server, model, tools and config"},
     {"/copy", "copy the last reply to the clipboard"},
     {"/init", "write AGENTS.md (model) and a CLIL.md template for your own instructions"},
     {"/cd [dir]", "show or change the working directory"},
@@ -596,6 +597,42 @@ bool App::command(const std::string& line) {
                human_tokens(stats.prompt).c_str(), human_tokens(stats.completion).c_str(),
                stats.secs > 0.05 ? fmt("%.1f tok/s", (double)stats.completion / stats.secs).c_str() : "- tok/s",
                stats.secs);
+    } else if (cmd == "/doctor") {
+        note("Checking server, model, tools and config");
+        bool ok = true;
+        std::vector<ModelInfo> models;
+        std::string merr;
+        if (!lm.list_models(models, merr)) {
+            error("LM Studio server not reachable: " + merr);
+            ok = false;
+        } else {
+            note("✓ LM Studio server reachable");
+        }
+        if (cfg.model.empty()) {
+            error("No model loaded");
+            ok = false;
+        } else {
+            note("✓ Model is loaded");
+        }
+        if (!is_file(home_dir() + "/.clil/CLIL.md")) {
+            error("Missing ~/.clil/CLIL.md");
+            ok = false;
+        } else {
+            note("✓ ~/.clil/CLIL.md exists");
+        }
+        if (!is_file("AGENTS.md")) {
+            error("Missing AGENTS.md");
+            ok = false;
+        } else {
+            note("✓ AGENTS.md exists in working directory");
+        }
+        if (access(".", W_OK) != 0) {
+            error("Working directory is not writable");
+            ok = false;
+        } else {
+            note("✓ Working directory is writable");
+        }
+        if (ok) note("All checks passed!");
     } else if (cmd == "/copy") {
         std::string last;
         for (size_t i = msgs.size(); i-- > 0 && last.empty();)
