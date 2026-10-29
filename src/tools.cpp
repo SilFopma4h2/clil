@@ -94,7 +94,7 @@ std::string tool_title(const std::string& name, const Json& a) {
         return path;
     }
     if (name == "search") {
-        std::string t = arg_str(a, {"pattern", "query"}), g = arg_str(a, {"glob", "include"});
+        std::string t = arg_str(a, {"pattern", "query", "regex", "text", "search", "term", "q"}), g = arg_str(a, {"glob", "include"});
         return t + (g.empty() ? "" : "  " + g) + (path.empty() ? "" : "  in " + path);
     }
     if (name == "write") return path + " (" + plural(count_lines(arg_str(a, {"content", "text"})), "line") + ")";
@@ -582,7 +582,10 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
     if (name == "read") return run_read(path, arg_long(a, "offset", 0), arg_long(a, "limit", 0), cap);
     if (name == "search") {
         bool ic = a["ignore_case"].boolean();
-        return run_search(arg_str(a, {"pattern", "query"}), path, arg_str(a, {"glob", "include"}), ic, cap);
+        std::string pat = arg_str(a, {"pattern", "query", "regex", "text", "search", "term", "q"});
+        std::string glob = arg_str(a, {"glob", "include"});
+        if (pat.empty() && glob.empty()) return fail("search needs 'pattern' (text to find) or 'glob' (file names), e.g. {\"pattern\":\"quote\"}");
+        return run_search(pat, path, glob, ic, cap);
     }
     if (name == "write") {
         bool has = false;
