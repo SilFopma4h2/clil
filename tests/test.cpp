@@ -313,6 +313,21 @@ static void test_tools(const std::string& dir) {
     CHECK(!o.error);
     read_file(f, data, err);
     CHECK_EQ(data, std::string("top\nONE\nTWO\nmid\nthree\nTHREE\nend\n"));
+    {
+        Json none;
+        Json::parse("{}", none);
+        o = tool_run("read", none, 1000, 5);
+        CHECK(o.error && o.text.find("NO arguments") != std::string::npos && o.text.find("\"path\"") != std::string::npos);
+    }
+    {
+        Json odd;
+        Json::parse("{\"filepath\":\"" + f + "\"}", odd);  // invented argument name still works
+        o = tool_run("read", odd, 1000, 5);
+        CHECK(!o.error && o.text.find("ONE") != std::string::npos);
+        Json::parse("{\"target\":1}", odd);
+        o = tool_run("read", odd, 1000, 5);
+        CHECK(o.error && o.text.find("you sent: target") != std::string::npos);
+    }
     o = run_insert(f, 99, "x");
     CHECK(o.error && o.text.find("NOT changed") != std::string::npos);
     o = run_read(f, 0, 0, 10);  // byte cap

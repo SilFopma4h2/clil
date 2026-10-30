@@ -273,9 +273,8 @@ static const CmdInfo kCmds[] = {
     {"/stats", "tokens, speed and generation time this session"},
     {"/doctor", "check server, model, tools and config"},
     {"/copy", "copy the last reply to the clipboard"},
+    {"/echo <text>", "echo back input text"},
     {"/init", "write AGENTS.md (model) and a CLIL.md template for your own instructions"},
-    {"/cd [dir]", "show or change the working directory"},
-    {"/tools", "toggle tools (off = plain chat, smaller prompts)"},
     {"/yes", "toggle auto-approve for bash/write/edit"},
     {"/think", "toggle showing the model's reasoning"},
     {"/undo", "restore the files the last write/edit calls changed"},
@@ -520,12 +519,23 @@ bool App::command(const std::string& line) {
     } else if (cmd == "/server" || cmd == "/lms") {
         std::string lms = find_lms();
         if (lms.empty())
-            return error("`lms` not found; open LM Studio once, or see https://lmstudio.ai/docs/cli"), true;
+            return error("`lms` not found; open LMStudio once, or see https://lmstudio.ai/docs/cli"), true;
         std::vector<std::string> argv = {lms};
         if (cmd == "/server") argv.push_back("server");
         argv.insert(argv.end(), a.begin() + 1, a.end());
         if (cmd == "/server" && a.size() == 1) argv.push_back("status");
         run_attached(argv);
+    } else if (cmd == "/echo") {
+        std::string rest;
+        for (size_t i = 1; i < a.size(); ++i) {
+            if (!rest.empty()) rest += " ";
+            rest += a[i];
+        }
+        if (rest.empty()) {
+            note("Usage: /echo <text> - echo back the input text");
+        } else {
+            note(rest);
+        }
     } else if (cmd == "/clear" || cmd == "/new" || cmd == "/reset") {
         if (pick_host()) {  // a fresh conversation has no prompt cache to lose
             refresh_models(err);

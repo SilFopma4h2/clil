@@ -56,6 +56,25 @@ static std::string arg_str(const Json& a, std::initializer_list<const char*> key
     return "";
 }
 
+// Models invent names for the path argument (filepath, file_name, ...): take any string key that looks like one.
+static std::string arg_path(const Json& a) {
+    std::string p = arg_str(a, {"path", "file_path", "file"});
+    for (size_t i = 0; p.empty() && i < a.members().size(); ++i) {
+        const auto& m = a.members()[i];
+        if (m.second.is_str() && (m.first.find("path") != std::string::npos || m.first.find("file") != std::string::npos ||
+                                  m.first.find("name") != std::string::npos))
+            p = m.second.str();
+    }
+    return p;
+}
+
+static std::string arg_keys(const Json& a) {
+    std::string k;
+    for (auto& m : a.members())
+        k += (k.empty() ? "" : ", ") + m.first;
+    return k;
+}
+
 static long arg_long(const Json& a, const char* key, long def) {
     const Json& v = a[key];
     if (v.is_num()) return (long)v.integer();
@@ -87,7 +106,7 @@ std::string tool_title(const std::string& name, const Json& a) {
         size_t nl = c.find('\n');
         return nl == std::string::npos ? c : c.substr(0, nl) + " …";
     }
-    std::string path = arg_str(a, {"path", "file_path", "file"});
+    std::string path = arg_path(a);
     if (name == "read") {
         long off = arg_long(a, "offset", 0), lim = arg_long(a, "limit", 0);
         if (off > 0 || lim > 0) path += fmt(" [%ld+%ld]", off > 0 ? off : 1, lim);
@@ -577,8 +596,20 @@ ToolOutput run_bash(const std::string& cmd, size_t cap, int timeout_s) {
 ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int timeout_s) {
     if (!a.is_obj()) return fail("arguments must be a JSON object");
     if (mcp_owns(name)) return mcp_call(name, a, cap, timeout_s);
+    if (a.size() == 0) {  // small models sometimes call a tool with {}; show them the shape instead of a bare "missing"
+        const char* ex = name == "bash"     ? R"({"command":"make test"})"
+                         : name == "read"   ? R"({"path":"src/main.cpp","offset":1,"limit":60})"
+                         : name == "search" ? R"({"pattern":"kSchemas","glob":"*.cpp"})"
+                         : name == "write"  ? R"({"path":"notes.txt","content":"text"})"
+                         : name == "insert" ? R"({"path":"src/a.cpp","line":10,"text":"int x;"})"
+                         : name == "edit"   ? R"({"path":"src/a.cpp","old_string":"a","new_string":"b"})"
+                                            : nullptr;
+        if (ex) return fail("'" + name + "' was called with NO arguments. Fill in the arguments, e.g. " + ex);
+    }
     if (name == "bash") return run_bash(arg_str(a, {"command", "cmd"}), cap, timeout_s);
-    std::string path = arg_str(a, {"path", "file_path", "file"});
+    std::string path = arg_path(a);
+    if (path.empty() && (name == "read" || name == "write" || name == "edit" || name == "insert"))
+        return fail("missing 'path' (you sent: " + arg_keys(a) + "). Use the exact argument name 'path', e.g. {\"path\":\"src/main.cpp\"}");
     if (name == "read") return run_read(path, arg_long(a, "offset", 0), arg_long(a, "limit", 0), cap);
     if (name == "search") {
         bool ic = a["ignore_case"].boolean();
