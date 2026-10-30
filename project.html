@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>clil - Terminal Coding Agent</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', 'Consolas', monospace;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: auto;
+            padding: 2em;
+        }
+        
+        h1 {
+            color: #007acc;
+            border-bottom: 2px solid #cccccc;
+            padding-bottom: 0.5em;
+        }
+        
+        h2 {
+            color: #4ec0ff;
+            margin-top: 1em;
+        }
+        
+        .box {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 1em;
+            margin-bottom: 1em;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            .box {
+                background-color: #2d2d2d;
+                border-left: 4px solid #4ec0ff;
+            }
+        }
+        
+        code {
+            background-color: #f0f0f0;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            code {
+                background-color: #3a3a3a;
+            }
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>clil - Terminal Coding Agent</h1>
+        
+        <div class="box">
+            <p><strong>clil</strong> is a tiny terminal coding agent designed for local LM Studio models. It provides powerful capabilities to inspect and manipulate files, run shell commands, and interact with AI models.</p>
+            
+            <h2>Key Features</h2>
+            <ul>
+                <li><span style="color: #007acc;">✓</span> Zero dependencies (no libcurl, no JSON library)</li>
+                <li><span style="color: #007acc;">✓</span> Small binary size (~200KB) with minimal RAM usage</li>
+                <li><span style="color: #007acc;">✓</span> Runs entirely on local models without internet connection</li>
+                <li><span style="color: #007acc;">✓</span> Works with any model that supports OpenAI-compatible chat completions</li>
+            </ul>
+        </div>
+
+        <h2>Architecture & Files</h2>
+        
+        <div class="box">
+            <h3>Core Components</h3>
+            <ul>
+                <li><strong>main.cpp:</strong> Entry point and main REPL loop</li>
+                <li><strong>agent.cpp:</strong> Agent loop handling turn execution and tool calls</li>
+                <li><strong>lmstudio.cpp:</strong> LM Studio server communication and model management</li>
+                <li><strong>http.cpp:</strong> Custom HTTP/1.1 client for communication with LM Studio server</li>
+                <li><strong>json.cpp:</strong> Custom JSON parser and serializer (no external dependencies)</li>
+            </ul>
+        </div>
+
+        <div class="box">
+            <h3>Utility Components</h3>
+            <ul>
+                <li><strong>tools.cpp:</strong> Implementation of all available tools (read, write, edit, bash, search)</li>
+                <li><strong>state.c:</strong> Shared state management for multiple clil instances</li>
+            </ul>
+        </div>
+
+        <h2>Available Tools</h2>
+        <ul>
+            <li><strong>bash:</strong> Run shell commands non-interactively</li>
+            <li><strong>read:</strong> Read a text file or list directory contents</li>
+            <li><strong>write:</strong> Create or overwrite a file with content</li>
+            <li><strong>edit:</strong> Replace one exact occurrence in a file</li>
+            <li><strong>insert:</strong> Insert text after specified line number (0 = at start)</li>
+            <li><strong>search:</strong> Search files recursively with regex pattern matching</li>
+        </ul>
+
+        <h2>Build & Usage</h2>
+<pre style="background-color: #f8f9fa; padding: 0.5em;">
+make                      # builds ./clil
+make test                 # run unit tests (if available)
+</pre>
+<pre style="background-color: #f8f9fa; padding: 0.5em;">
+clil                        # interactive session
+clil -m qwen/qwen3-coder-30b  # pick a model and context size
+clil "fix this bug in main.cpp" 
+</pre>
+
+<h2>Slash Commands</h2>
+<ul>
+<li><code>/help</code>: Show all available slash commands</li>
+<li><code>/models</code>: Show downloaded models with tool support info</li>
+<li><code>/load &lt;model name&gt;</code>: Load model into LM Studio</li>
+<li><code>/unload [name]</code>: Unload a loaded model</li>
+<li><code>/server [start|stop|status]</code>: Control LM Studio server</li>
+<li><code>/ctx</code>: Show current context usage</li>
+<li><code>/clear</code>: Start new conversation with fresh context</li>
+</ul>
+
+    </div>
+</body>
+</html>
