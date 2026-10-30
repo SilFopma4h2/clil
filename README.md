@@ -132,6 +132,14 @@ If a model is selected but not loaded, clil loads it through LM Studio's REST
 API when you send your next message. It uses `-c` as the context length when
 you set one.
 
+## Inside SF-IDE
+
+[SF-IDE](https://github.com/SilFopma4h2/SF-IDE) bundles clil in its side panel. It starts clil with
+`SFIDE_SOCKET` set; clil then reads files through the editor (unsaved edits included) and hands its
+`write` / `edit` changes to the editor, which shows them live in the open tab, keeps them undoable and saves
+them. Each message also gets a short note about the file, cursor line and selection the user has open.
+Without `SFIDE_SOCKET` nothing changes.
+
 ## Several clil's at once
 
 Open as many as you like. They find each other through `/tmp/clil-<uid>` (a private
@@ -236,7 +244,8 @@ The code is in `src/`:
 | `json` | JSON value, parser and serializer |
 | `http` | socket HTTP/1.1 client with chunked decoding |
 | `lmstudio` | REST and streaming chat client |
-| `tools` | the four tools |
+| `tools` | the tools |
+| `ide` | SF-IDE bridge: read / edit files through the editor |
 | `agent` | the turn loop, context budget and streaming printer |
 | `commands` | slash commands |
 | `term` | line editor and spinner |
