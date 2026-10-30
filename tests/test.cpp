@@ -300,7 +300,36 @@ static void test_tools(const std::string& dir) {
     CHECK_EQ(data, std::string("ONE\nTWO\nthree\nthree\n"));
 
     o = run_read(f, 2, 2, 10000);
-    CHECK_EQ(o.text, std::string("TWO\nthree\n[lines 2-3 of 4; continue with offset=4]"));
+    CHECK_EQ(o.text, std::string("2│TWO\n3│three\n[lines 2-3 of 4; continue with offset=4]"));
+    o = run_edit(f, "3│three\n4│three\n", "3│three\n4│THREE\n");  // numbered copy from read still works
+    CHECK(!o.error);
+    read_file(f, data, err);
+    CHECK_EQ(data, std::string("ONE\nTWO\nthree\nTHREE\n"));
+    o = run_insert(f, 0, "top");
+    CHECK(!o.error);
+    o = run_insert(f, 5, "end\n");  // after the last line (now 5 lines)
+    CHECK(!o.error);
+    o = run_insert(f, 3, "9│mid");
+    CHECK(!o.error);
+    read_file(f, data, err);
+    CHECK_EQ(data, std::string("top\nONE\nTWO\nmid\nthree\nTHREE\nend\n"));
+    {
+        Json none;
+        Json::parse("{}", none);
+        o = tool_run("read", none, 1000, 5);
+        CHECK(o.error && o.text.find("NO arguments") != std::string::npos && o.text.find("\"path\"") != std::string::npos);
+    }
+    {
+        Json odd;
+        Json::parse("{\"filepath\":\"" + f + "\"}", odd);  // invented argument name still works
+        o = tool_run("read", odd, 1000, 5);
+        CHECK(!o.error && o.text.find("ONE") != std::string::npos);
+        Json::parse("{\"target\":1}", odd);
+        o = tool_run("read", odd, 1000, 5);
+        CHECK(o.error && o.text.find("you sent: target") != std::string::npos);
+    }
+    o = run_insert(f, 99, "x");
+    CHECK(o.error && o.text.find("NOT changed") != std::string::npos);
     o = run_read(f, 0, 0, 10);  // byte cap
     CHECK(o.text.find("continue with offset=") != std::string::npos);
     o = run_read(dir, 0, 0, 10000);
@@ -599,6 +628,7 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);
     char tmpl[] = "/tmp/clil-test-XXXXXX";
     std::string dir = mkdtemp(tmpl);
+    setenv("HOME", dir.c_str(), 1);  // keep the real ~/.clil/CLIL.md out of the tests
     setenv("CLIL_RUN", (dir + "/run").c_str(), 1);
     setenv("CLIL_MCP_IDLE", "3", 1);
     CHECK(clil_open(nullptr) == 0);

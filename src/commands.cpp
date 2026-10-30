@@ -271,10 +271,10 @@ static const CmdInfo kCmds[] = {
     {"/mcp [connect|disconnect <name>]", "list or connect MCP servers from ~/.lmstudio/mcp.json"},
     {"/status", "server, model, context, slots, MCP and other clil's at a glance"},
     {"/stats", "tokens, speed and generation time this session"},
+    {"/doctor", "check server, model, tools and config"},
     {"/copy", "copy the last reply to the clipboard"},
+    {"/echo <text>", "echo back input text"},
     {"/init", "write AGENTS.md (model) and a CLIL.md template for your own instructions"},
-    {"/cd [dir]", "show or change the working directory"},
-    {"/tools", "toggle tools (off = plain chat, smaller prompts)"},
     {"/yes", "toggle auto-approve for bash/write/edit"},
     {"/think", "toggle showing the model's reasoning"},
     {"/undo", "restore the files the last write/edit calls changed"},
@@ -519,12 +519,23 @@ bool App::command(const std::string& line) {
     } else if (cmd == "/server" || cmd == "/lms") {
         std::string lms = find_lms();
         if (lms.empty())
-            return error("`lms` not found; open LM Studio once, or see https://lmstudio.ai/docs/cli"), true;
+            return error("`lms` not found; open LMStudio once, or see https://lmstudio.ai/docs/cli"), true;
         std::vector<std::string> argv = {lms};
         if (cmd == "/server") argv.push_back("server");
         argv.insert(argv.end(), a.begin() + 1, a.end());
         if (cmd == "/server" && a.size() == 1) argv.push_back("status");
         run_attached(argv);
+    } else if (cmd == "/echo") {
+        std::string rest;
+        for (size_t i = 1; i < a.size(); ++i) {
+            if (!rest.empty()) rest += " ";
+            rest += a[i];
+        }
+        if (rest.empty()) {
+            note("Usage: /echo <text> - echo back the input text");
+        } else {
+            note(rest);
+        }
     } else if (cmd == "/clear" || cmd == "/new" || cmd == "/reset") {
         if (pick_host()) {  // a fresh conversation has no prompt cache to lose
             refresh_models(err);
@@ -596,6 +607,42 @@ bool App::command(const std::string& line) {
                human_tokens(stats.prompt).c_str(), human_tokens(stats.completion).c_str(),
                stats.secs > 0.05 ? fmt("%.1f tok/s", (double)stats.completion / stats.secs).c_str() : "- tok/s",
                stats.secs);
+    } else if (cmd == "/doctor") {
+        note("Checking server, model, tools and config");
+        bool ok = true;
+        std::vector<ModelInfo> models;
+        std::string merr;
+        if (!lm.list_models(models, merr)) {
+            error("LM Studio server not reachable: " + merr);
+            ok = false;
+        } else {
+            note("✓ LM Studio server reachable");
+        }
+        if (cfg.model.empty()) {
+            error("No model loaded");
+            ok = false;
+        } else {
+            note("✓ Model is loaded");
+        }
+        if (!is_file(home_dir() + "/.clil/CLIL.md")) {
+            error("Missing ~/.clil/CLIL.md");
+            ok = false;
+        } else {
+            note("✓ ~/.clil/CLIL.md exists");
+        }
+        if (!is_file("AGENTS.md")) {
+            error("Missing AGENTS.md");
+            ok = false;
+        } else {
+            note("✓ AGENTS.md exists in working directory");
+        }
+        if (access(".", W_OK) != 0) {
+            error("Working directory is not writable");
+            ok = false;
+        } else {
+            note("✓ Working directory is writable");
+        }
+        if (ok) note("All checks passed!");
     } else if (cmd == "/copy") {
         std::string last;
         for (size_t i = msgs.size(); i-- > 0 && last.empty();)
