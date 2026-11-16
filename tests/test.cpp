@@ -371,6 +371,16 @@ static void test_tools(const std::string& dir) {
     CHECK(o.text == "(no matches)");
     o = run_search("(", dir, "", false, 1000);
     CHECK(o.error);
+
+    // ignored: built-in names and the root .gitignore
+    std::string ig = dir + "/ig";
+    write_file(ig + "/.gitignore", "# c\nout/\n*.log\n!keep.log\n", err);
+    for (const char* n : {"keep.txt", "out/x.txt", "a.log", ".venv/y.txt", "src/z.txt"})
+        write_file(ig + "/" + n, "needle\n", err);
+    o = run_search("needle", ig, "", false, 1000);
+    CHECK(o.text.find("keep.txt") != std::string::npos && o.text.find("src/z.txt") != std::string::npos);
+    CHECK(o.text.find("out") == std::string::npos && o.text.find("a.log") == std::string::npos &&
+          o.text.find(".venv") == std::string::npos);
     o = tool_run("nope", args, 1000, 5);
     CHECK(o.error);
 

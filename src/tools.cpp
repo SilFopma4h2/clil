@@ -457,6 +457,7 @@ struct Search {
     regex_t re;
     bool has_re = false;
     std::string glob, out;
+    std::vector<std::string> ignore;  // file/dir names (fnmatch patterns) to skip
     size_t cap, matches = 0, files = 0;
     bool full = false;
 };
@@ -499,7 +500,11 @@ void search_dir(Search& s, const std::string& dir) {
     std::sort(names.begin(), names.end());
     for (auto& n : names) {
         if (s.full || g_interrupted) return;
-        if (n == "." || n == ".." || n == ".git" || n == "node_modules" || n == "build") continue;
+        if (n == "." || n == "..") continue;
+        bool skip = false;
+        for (auto& g : s.ignore)
+            skip |= fnmatch(g.c_str(), n.c_str(), 0) == 0;
+        if (skip) continue;
         std::string p = dir == "." ? n : dir + (dir.back() == '/' ? "" : "/") + n;
         if (is_dir(p))
             search_dir(s, p);
@@ -544,6 +549,16 @@ ToolOutput run_search(const std::string& pattern, const std::string& path, const
         s.has_re = true;
     }
     std::string p = path.empty() ? "." : expand_home(path);
+    s.ignore = {".git", "node_modules", "build", ".venv", "dist", "target", "__pycache__", ".cache"};
+    std::string gi, gerr;
+    // shortcut: only plain names/globs from the root .gitignore (no nested files, paths or "!" rules); upgrade if it hides too much or too little
+    if (is_dir(p) && read_file(p + "/.gitignore", gi, gerr))
+        for (auto& l : split_lines(gi)) {
+            std::string e = trim(l);
+            if (!e.empty() && e[0] == '/') e.erase(0, 1);
+            if (!e.empty() && e.back() == '/') e.pop_back();
+            if (!e.empty() && e[0] != '#' && e[0] != '!' && e.find('/') == std::string::npos) s.ignore.push_back(e);
+        }
     if (is_dir(p))
         search_dir(s, p);
     else if (is_file(p))
