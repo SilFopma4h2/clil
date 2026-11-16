@@ -3,6 +3,8 @@
 ## Build & Test
 - **Build**: `make` (generates `./clil`)
 - **Test**: `make test` (unit tests for JSON, HTTP, and tools)
+- **Size**: `make size` (fails above 200 KB)
+- **Bench**: `tests/bench/run.sh -m MODEL` (5 real tasks against LM Studio; pass/fail, seconds, tool calls)
 
 ## Code Layout
 - `src/`: Core implementation (C++17/C11)
