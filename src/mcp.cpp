@@ -1,4 +1,5 @@
 #include "mcp.hpp"
+#include "app.hpp"
 #include "state.h"
 #include "util.hpp"
 
@@ -221,7 +222,7 @@ Json init_params() {
     Json p = Json::object();
     p.set("protocolVersion", "2025-06-18")
         .set("capabilities", Json::object())
-        .set("clientInfo", Json::object().set("name", "clil").set("version", "0.1.0"));
+        .set("clientInfo", Json::object().set("name", "clil").set("version", CLIL_VERSION));
     return p;
 }
 

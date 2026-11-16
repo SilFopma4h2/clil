@@ -12,7 +12,7 @@ no dependencies (no libcurl, no JSON library, no readline), so it stays out of
 the way of the model that needs your laptop's RAM and GPU.
 
 ```
-▀▄  ▄▄▄ █ ▀ █   clil 0.1.0 · LM Studio 127.0.0.1:1234
+▀▄  ▄▄▄ █ ▀ █   clil 0.2.0 · LM Studio 127.0.0.1:1234
 ▄▀  █▄▄ █ █ █   qwen/qwen3-coder-30b (ctx 32k) · tools · /help
 
 › add a --verbose flag to main.cpp and make sure it still builds
