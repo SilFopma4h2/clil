@@ -305,8 +305,9 @@ static void test_tools(const std::string& dir) {
     CHECK(!o.error);
     read_file(f, data, err);
     CHECK_EQ(data, std::string("ONE\nTWO\nthree\nTHREE\n"));
+    CHECK(o.text.find("4│THREE") != std::string::npos);  // edit shows the changed lines
     o = run_insert(f, 0, "top");
-    CHECK(!o.error);
+    CHECK(!o.error && o.text.find("1│top") != std::string::npos);
     o = run_insert(f, 5, "end\n");  // after the last line (now 5 lines)
     CHECK(!o.error);
     o = run_insert(f, 3, "9│mid");

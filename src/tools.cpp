@@ -291,6 +291,17 @@ static std::string strip_line_numbers(const std::string& s) {
     return out;
 }
 
+// The changed lines (first..first+n-1, 1-based) with 2 lines of context, in read's format.
+static std::string changed_lines(const std::string& data, size_t first, size_t n) {
+    auto lines = split_lines(data);
+    size_t from = first > 2 ? first - 2 : 1, to = std::min(lines.size(), first + std::min<size_t>(n, 12) + 1);
+    std::string out = "\n";
+    for (size_t i = from; i <= to; ++i)
+        out += fmt("%zu│", i) + utf8_clip(lines[i - 1], 200) + "\n";
+    if (n > 12) out += "[...]\n";
+    return out;
+}
+
 ToolOutput run_insert(const std::string& path, long line, const std::string& text, size_t cap) {
     std::string p = expand_home(path);
     if (p.empty()) return fail("missing 'path'");
@@ -314,7 +325,8 @@ ToolOutput run_insert(const std::string& path, long line, const std::string& tex
     if (!write_file(p, data, err)) return fail(err);
     (void)cap;
     ToolOutput o;
-    o.text = fmt("Inserted %zu lines into %s after line %ld", count_lines(ins), path.c_str(), line);
+    o.text = fmt("Inserted %zu lines into %s after line %ld", count_lines(ins), path.c_str(), line) +
+             changed_lines(data, (size_t)line + 1, count_lines(ins));
     o.summary = fmt("after line %ld: +%zu lines", line, count_lines(ins));
     return o;
 }
@@ -379,7 +391,8 @@ ToolOutput run_edit(const std::string& path, const std::string& old_in, const st
     if (!write_file(p, data, err)) return fail(err);
     size_t line = 1 + (size_t)std::count(data.begin(), data.begin() + (long)at, '\n');
     ToolOutput o;
-    o.text = fmt("Edited %s at line %zu (-%zu +%zu lines)", path.c_str(), line, count_lines(old_s), count_lines(new_s));
+    o.text = fmt("Edited %s at line %zu (-%zu +%zu lines)", path.c_str(), line, count_lines(old_s), count_lines(new_s)) +
+             changed_lines(data, line, count_lines(new_s));
     o.summary = fmt("line %zu: -%zu +%zu", line, count_lines(old_s), count_lines(new_s));
     return o;
 }
