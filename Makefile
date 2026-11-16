@@ -15,7 +15,8 @@ CFLAG  := -std=c11 -D_GNU_SOURCE $(COMMON)
 ifeq ($(shell uname -s),Darwin)
   FLAGS += -flto -mmacosx-version-min=11.0
   CFLAG += -flto -mmacosx-version-min=11.0
-  LINK  := -flto -mmacosx-version-min=11.0 -Wl,-dead_strip
+  # -no_data_const: drops a 16 KB page-aligned segment (keeps us under 200 KB); const data is no longer read-only after load
+  LINK  := -flto -mmacosx-version-min=11.0 -Wl,-dead_strip -Wl,-no_data_const
 else
   FLAGS += -flto=auto
   CFLAG += -flto=auto
@@ -48,6 +49,10 @@ build:
 test: build/clil-test
 	./build/clil-test
 
+# Fails when the binary outgrows 200 KB (AGENTS.md size target)
+size: clil
+	@s=$$(wc -c < clil); echo "clil: $$s bytes"; [ $$s -le 204800 ] || { echo "over 200 KB"; exit 1; }
+
 # Apple Silicon + Intel in one binary
 universal:
 	$(MAKE) clean
@@ -63,6 +68,6 @@ uninstall:
 clean:
 	rm -rf build clil
 
-.PHONY: test universal install uninstall clean
+.PHONY: test size universal install uninstall clean
 
 -include $(OBJ:.o=.d) build/test.d

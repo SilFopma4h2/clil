@@ -76,16 +76,17 @@ std::string App::system_prompt() const {
 
 void App::reset_conversation() {
     msgs.clear();
+    tool_forget_reads();
     msgs.push_back(message("system", system_prompt()));
     ctx_used = -1;
     ctx_used_msgs = 0;
 }
 
-std::string App::build_body(bool tools, const Json* extra_user, int max_tokens) const {
+std::string App::build_body(bool tools, const Json* extra_user, int max_tokens, size_t count) const {
     std::string b = "{\"model\":";
     json_quote(b, cfg.model);
     b += ",\"messages\":[";
-    for (size_t i = 0; i < msgs.size(); ++i) {
+    for (size_t i = 0; i < msgs.size() && i < count; ++i) {
         if (i) b += ',';
         msgs[i].dump_to(b);
     }
@@ -99,6 +100,10 @@ std::string App::build_body(bool tools, const Json* extra_user, int max_tokens) 
         tool_schema_cache().dump_to(b);
     }
     b += ",\"stream\":true,\"stream_options\":{\"include_usage\":true}";
+    if (!cfg.draft.empty()) {
+        b += ",\"draft_model\":";
+        json_quote(b, cfg.draft);
+    }
     if (cfg.temperature >= 0) b += fmt(",\"temperature\":%.3g", cfg.temperature);
     int mt = max_tokens ? max_tokens : cfg.max_tokens;
     if (mt > 0) b += fmt(",\"max_tokens\":%d", mt);
@@ -196,7 +201,9 @@ void App::fit_context(bool mid_turn, size_t incoming) {
                  human_ctx(ctx_len).c_str(), n, human_tokens(after).c_str()));
     if (after <= limit) return;
     if (compact(true)) {
-        if (mid_turn) msgs.push_back(message("user", "Continue with the task."));
+        // A kept tail ends in a tool result, so only a full summary needs the nudge.
+        if (mid_turn && msgs.back()["role"].str() == "assistant")
+            msgs.push_back(message("user", "Continue with the task."));
     } else {
         drop_oldest();
     }
@@ -208,6 +215,15 @@ bool App::compact(bool automatic) {
         return false;
     }
     long long before = estimate_tokens();
+    // Keep the last two user turns verbatim, unless that tail is itself big.
+    size_t keep = msgs.size(), users = 0, tail_chars = 0;
+    for (size_t i = msgs.size(); i-- > 1;) {
+        tail_chars += message_chars(msgs[i]);
+        if (msgs[i]["role"].str() == "user" && ++users == 2) {
+            if (i > 1 && (double)tail_chars / 3.5 <= (ctx_len > 0 ? ctx_len : 8192) / 4.0) keep = i;
+            break;
+        }
+    }
     // Same prefix as the normal requests (tools included) so LM Studio can reuse its prompt
     // cache; only trim old tool output when the summary request would not fit otherwise.
     if (ctx_len > 0 && before + 1400 > ctx_len) prune_history(1);
@@ -223,7 +239,7 @@ bool App::compact(bool automatic) {
         sp.label(n ? fmt("waiting for %s", plural((size_t)n, "other clil").c_str()) : "compacting conversation");
         sp.tick();
     };
-    ChatReply rep = lm.chat(build_body(cfg.tools, &ask, 1024), ev);
+    ChatReply rep = lm.chat(build_body(cfg.tools, &ask, 1024, keep), ev);
     sp.stop();
     std::string summary = strip_think(rep.content);
     if (rep.interrupted || !rep.error.empty() || summary.empty()) {
@@ -231,9 +247,11 @@ bool App::compact(bool automatic) {
         warn("compaction failed" + (rep.error.empty() ? std::string() : ": " + rep.error));
         return false;
     }
+    std::vector<Json> tail(msgs.begin() + (long)keep, msgs.end());
     Json sys = msgs[0];
     msgs = {sys, message("user", "Summary of our conversation so far:\n" + summary),
             message("assistant", "Understood. I'll continue from there.")};
+    msgs.insert(msgs.end(), tail.begin(), tail.end());
     ctx_used = -1;
     note(fmt("compacted conversation: ~%s → ~%s tokens", human_tokens(before).c_str(),
              human_tokens(estimate_tokens()).c_str()));
@@ -493,7 +511,7 @@ std::string App::exec_tool(const ToolCall& c, bool& stop) {
         if (o.error)
             failed_changes.insert(path);
         else
-            failed_changes.erase(path);
+            failed_changes.erase(path), changed = true;
     }
     fprintf(stderr, "  %s└ %s%s\n", ce(o.error ? ansi::red : ansi::dim), o.summary.c_str(), ce(ansi::reset));
     if (!cfg.quiet)
@@ -514,14 +532,16 @@ int App::run_turn(const std::string& user_text) {
     if (!ensure_model_ready()) return 1;
 
     failed_changes.clear();
+    changed = false;
     tool_new_turn();
     fit_context(false, user_text.size());
     size_t turn_start = msgs.size();
     msgs.push_back(message("user", user_text));
     long long gen_tokens = 0;
     double gen_secs = 0;
-    std::string last_sig;
-    int repeats = 0, rc = 0, nudges = 0;
+    std::string last_sig, fail_key;
+    int repeats = 0, rc = 0, nudges = 0, fails = 0, checks = 0;
+    bool empty_nudged = false;
 
     for (int step = 0;; ++step) {
         if (step >= cfg.max_steps) {
@@ -610,6 +630,30 @@ int App::run_turn(const std::string& user_text) {
                                                "in the error (or use write with the full new content)."));
             continue;
         }
+        if (calls.empty() && clean.empty() && !pr.answered() && rep.finish != "length" && !empty_nudged &&
+            step + 1 < cfg.max_steps) {
+            // Thinking models sometimes stop after their reasoning without acting: ask once to go on.
+            empty_nudged = true;
+            note("  ↻ empty reply; asking the model to continue");
+            msgs.pop_back();
+            msgs.push_back(message("user", "Continue with the task."));
+            continue;
+        }
+        if (calls.empty() && changed && !cfg.check.empty()) {
+            // The model is done and changed files: run the user's check and send failures back (twice at most).
+            changed = false;
+            ToolOutput o = run_bash(cfg.check, tool_cap(), cfg.timeout_s);
+            if (!o.error) {
+                note("  ✓ " + cfg.check);
+            } else if (!g_interrupted && checks++ < 2 && step + 1 < cfg.max_steps) {
+                note("  ✗ " + cfg.check + " failed; asking the model to fix it");
+                msgs.push_back(message("user", "The check `" + cfg.check + "` failed after your changes:\n" + o.text +
+                                                   "\nFix the problem."));
+                continue;
+            } else {
+                warn("check failed: " + cfg.check);
+            }
+        }
         if (calls.empty()) {
             if (rep.finish == "length") warn("reply was cut off (token limit reached)");
             if (clean.empty() && !pr.answered()) warn("the model returned an empty reply");
@@ -618,6 +662,14 @@ int App::run_turn(const std::string& user_text) {
         bool stop = false;
         for (auto& c : calls) {
             std::string result = stop ? "Skipped: the user stopped this turn." : exec_tool(c, stop);
+            // Same tool failing on the same target with varying arguments: the exact-repeat check misses it.
+            Json a;
+            Json::parse(c.args, a);
+            std::string key = c.name + " " + tool_title(c.name, a);
+            if (starts_with(result, "Error"))
+                fails = key == fail_key ? fails + 1 : 1, fail_key = key;
+            else
+                fails = 0;
             Json tm = message("tool", result);
             tm.set("tool_call_id", c.id);
             msgs.push_back(tm);
@@ -625,6 +677,10 @@ int App::run_turn(const std::string& user_text) {
         if (stop) {
             rc = g_interrupted ? 130 : 0;
             g_interrupted = 0;
+            break;
+        }
+        if (fails >= 3) {
+            warn("the model keeps failing on " + fail_key + "; stopping");
             break;
         }
         std::string sig;

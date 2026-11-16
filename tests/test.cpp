@@ -305,14 +305,29 @@ static void test_tools(const std::string& dir) {
     CHECK(!o.error);
     read_file(f, data, err);
     CHECK_EQ(data, std::string("ONE\nTWO\nthree\nTHREE\n"));
+    CHECK(o.text.find("4│THREE") != std::string::npos);  // edit shows the changed lines
     o = run_insert(f, 0, "top");
-    CHECK(!o.error);
+    CHECK(!o.error && o.text.find("1│top") != std::string::npos);
     o = run_insert(f, 5, "end\n");  // after the last line (now 5 lines)
     CHECK(!o.error);
     o = run_insert(f, 3, "9│mid");
     CHECK(!o.error);
     read_file(f, data, err);
     CHECK_EQ(data, std::string("top\nONE\nTWO\nmid\nthree\nTHREE\nend\n"));
+    o = run_edits(f, {{"mid", "MID"}, {"nope", "x"}});  // one bad edit: nothing is applied
+    CHECK(o.error && o.text.find("edit 2 of 2") != std::string::npos);
+    read_file(f, data, err);
+    CHECK_EQ(data, std::string("top\nONE\nTWO\nmid\nthree\nTHREE\nend\n"));
+    o = run_edits(f, {{"mid", "MID"}, {"end", "END"}});
+    CHECK(!o.error);
+    read_file(f, data, err);
+    CHECK_EQ(data, std::string("top\nONE\nTWO\nMID\nthree\nTHREE\nEND\n"));
+    {
+        Json call;
+        Json::parse("{\"path\":\"" + f + "\",\"edits\":[{\"old_string\":\"mid\",\"new_string\":\"MID\"},{\"old_string\":\"end\"}]}", call);
+        o = tool_run("edit", call, 4000, 5);
+        CHECK(o.error && o.text.find("edits[1]") != std::string::npos);
+    }
     {
         Json none;
         Json::parse("{}", none);
@@ -356,6 +371,26 @@ static void test_tools(const std::string& dir) {
     CHECK(o.text == "(no matches)");
     o = run_search("(", dir, "", false, 1000);
     CHECK(o.error);
+
+    // edit after an outside change since the last read gets a note, once
+    std::string sf = dir + "/stale.txt";
+    write_file(sf, "alpha\n", err);
+    run_read(sf, 0, 0, 1000);
+    write_file(sf, "alpha\nbeta\n", err);  // changed outside clil
+    o = run_edit(sf, "alpha", "ALPHA");
+    CHECK(!o.error && o.text.find("changed since") != std::string::npos);
+    o = run_edit(sf, "beta", "BETA");
+    CHECK(!o.error && o.text.find("changed since") == std::string::npos);
+
+    // ignored: built-in names and the root .gitignore
+    std::string ig = dir + "/ig";
+    write_file(ig + "/.gitignore", "# c\nout/\n*.log\n!keep.log\n", err);
+    for (const char* n : {"keep.txt", "out/x.txt", "a.log", ".venv/y.txt", "src/z.txt"})
+        write_file(ig + "/" + n, "needle\n", err);
+    o = run_search("needle", ig, "", false, 1000);
+    CHECK(o.text.find("keep.txt") != std::string::npos && o.text.find("src/z.txt") != std::string::npos);
+    CHECK(o.text.find("out") == std::string::npos && o.text.find("a.log") == std::string::npos &&
+          o.text.find(".venv") == std::string::npos);
     o = tool_run("nope", args, 1000, 5);
     CHECK(o.error);
 
@@ -496,6 +531,108 @@ static void test_context_budget() {
         CHECK_EQ(app.msgs[3]["content"].str(), std::string("next"));
         CHECK_EQ(app.msgs[4]["content"].str(), std::string("fine"));
     }
+
+    // 3) /compact keeps the last two user turns verbatim
+    Server k = serve({answer("- older work")});
+    app.lm.ep = k.ep;
+    app.ctx_len = 8000;
+    fill_history(app, 6, 100);
+    CHECK(app.compact(false));
+    req = k.requests();
+    CHECK(req.find("step 3") != std::string::npos);
+    CHECK(req.find("step 4") == std::string::npos);
+    CHECK(app.msgs.size() == 3 + 8);  // sys, summary, ack, then 2 turns x (user, assistant, tool, assistant)
+    if (app.msgs.size() == 11) {
+        CHECK(app.msgs[1]["content"].str().find("- older work") != std::string::npos);
+        CHECK_EQ(app.msgs[3]["content"].str(), std::string("step 4"));
+    }
+}
+
+// A streamed reply that calls one tool, and one that only answers.
+static std::vector<std::string> tool_sse(const std::string& name, const Json& args) {
+    static int id = 0;
+    Json fn = Json::object();
+    fn.set("name", name).set("arguments", args.dump());
+    Json tc = Json::object();
+    tc.set("index", 0).set("id", fmt("call%d", ++id)).set("function", fn);
+    Json delta = Json::object();
+    delta.set("tool_calls", Json::array().push(tc));
+    Json ch = Json::object();
+    ch.set("index", 0).set("delta", delta);
+    Json ev = Json::object();
+    ev.set("choices", Json::array().push(ch));
+    return sse_response({ev.dump()}, 64, 4096);
+}
+static std::vector<std::string> answer_sse(const std::string& text) {
+    Json delta = Json::object();
+    delta.set("content", text);
+    Json ch = Json::object();
+    ch.set("index", 0).set("delta", delta);
+    Json ev = Json::object();
+    ev.set("choices", Json::array().push(ch));
+    return sse_response({ev.dump()}, 64, 4096);
+}
+static size_t request_count(const std::string& req) {
+    size_t n = 0;
+    for (size_t p = req.find("\n----\n"); p != std::string::npos; p = req.find("\n----\n", p + 1))
+        ++n;
+    return n;
+}
+
+// Three failing edits of one file with different arguments end the turn; no 4th request is made.
+static void test_fail_stop(const std::string& dir) {
+    auto edit_call = [&](int i) {
+        Json args = Json::object();
+        args.set("path", dir + "/no-such-file.txt").set("old_string", fmt("v%d", i)).set("new_string", "x");
+        return tool_sse("edit", args);
+    };
+    Server s = serve({edit_call(1), edit_call(2), edit_call(3)});
+    App app;
+    app.lm.ep = s.ep;
+    app.lm.api = 2;
+    app.cfg.model = "m";
+    app.cfg.yes = true;
+    app.reset_conversation();
+    CHECK(app.run_turn("fix it") == 0);
+    CHECK(app.msgs.back()["role"].str() == "tool");
+    CHECK(request_count(s.requests()) == 3);
+}
+
+// --check: a failing check after the model is done goes back to it; a passing one ends the turn.
+static void test_check(const std::string& dir) {
+    std::string f = dir + "/checked.txt";
+    auto write_call = [&](const char* content) {
+        Json args = Json::object();
+        args.set("path", f).set("content", content);
+        return tool_sse("write", args);
+    };
+    Server s = serve({write_call("bad"), answer_sse("done"), write_call("good"), answer_sse("done")});
+    App app;
+    app.lm.ep = s.ep;
+    app.lm.api = 2;
+    app.cfg.model = "m";
+    app.cfg.yes = true;
+    app.cfg.check = "grep -q good " + f;
+    app.reset_conversation();
+    CHECK(app.run_turn("make it good") == 0);
+    std::string req = s.requests();
+    CHECK(request_count(req) == 4);
+    CHECK(req.find("failed after your changes") != std::string::npos);
+    CHECK_EQ(app.msgs.back()["content"].str(), std::string("done"));
+
+    // an empty reply gets one "continue" nudge
+    Server e = serve({answer_sse(""), answer_sse("done")});
+    app.lm.ep = e.ep;
+    CHECK(app.run_turn("go on") == 0);
+    CHECK(request_count(e.requests()) == 2);
+    CHECK_EQ(app.msgs.back()["content"].str(), std::string("done"));
+
+    // --draft is passed to LM Studio as draft_model
+    Server d = serve({answer_sse("hi")});
+    app.lm.ep = d.ep;
+    app.cfg.draft = "tiny-draft";
+    CHECK(app.run_turn("hello") == 0);
+    CHECK(d.requests().find("\"draft_model\":\"tiny-draft\"") != std::string::npos);
 }
 
 static void test_cd(const std::string& dir) {
@@ -641,6 +778,8 @@ int main(int argc, char** argv) {
     test_reply_helpers();
     test_save_resume(dir);
     test_context_budget();
+    test_fail_stop(dir);
+    test_check(dir);
     test_cd(dir);
     test_state();
     test_mcp(dir);

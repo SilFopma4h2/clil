@@ -266,6 +266,8 @@ static const CmdInfo kCmds[] = {
     {"/ctx", "show context usage"},
     {"/system [text|off]", "show or set extra system instructions"},
     {"/temp [x|off]", "show or set the temperature"},
+    {"/check [cmd|off]", "command to run after the model changes files, e.g. /check make -s"},
+    {"/draft [name|off]", "draft model for speculative decoding (faster replies, same output)"},
     {"/peers", "other clil's on this machine and what they are doing"},
     {"/host [n|host:port]", "list or switch the LM Studio servers (several: --host a,b)"},
     {"/mcp [connect|disconnect <name>]", "list or connect MCP servers from ~/.lmstudio/mcp.json"},
@@ -561,6 +563,15 @@ bool App::command(const std::string& line) {
         cfg.system_extra = lower(rest) == "off" ? "" : rest;
         if (!msgs.empty()) msgs[0].set("content", system_prompt());
         note(cfg.system_extra.empty() ? "extra system instructions removed" : "system instructions updated");
+    } else if (cmd == "/draft") {
+        if (a.size() > 1) {
+            const ModelInfo* m = lower(a[1]) == "off" ? nullptr : find_model(a[1]);
+            cfg.draft = lower(a[1]) == "off" ? "" : m ? m->key : a[1];  // unknown names go as-is; LM Studio reports them
+        }
+        note(cfg.draft.empty() ? "draft model: off" : "draft model: " + cfg.draft);
+    } else if (cmd == "/check") {
+        if (!rest.empty()) cfg.check = lower(rest) == "off" ? "" : rest;
+        note(cfg.check.empty() ? "check: off" : "check: " + cfg.check);
     } else if (cmd == "/temp" || cmd == "/temperature") {
         if (a.size() > 1) cfg.temperature = lower(a[1]) == "off" ? -1 : atof(a[1].c_str());
         note(cfg.temperature < 0 ? "temperature: model default" : fmt("temperature: %.2f", cfg.temperature));

@@ -15,6 +15,8 @@
 struct Settings {
     std::string model;         // id sent as "model" (instance id or model key)
     std::string system_extra;  // -s / /system
+    std::string check;         // --check / CLIL_CHECK / /check: run after a turn that changed files
+    std::string draft;         // --draft / /draft: LM Studio draft model for speculative decoding
     double temperature = -1;   // < 0: model default
     int max_tokens = 0;        // 0: unlimited
     int load_ctx = 0;          // context length for /load and auto-load (0: LM Studio default)
@@ -35,6 +37,7 @@ public:
     size_t ctx_used_msgs = 0;
     std::set<std::string> always_allow;
     std::set<std::string> failed_changes;  // files whose write/edit failed this turn
+    bool changed = false;                  // a write/edit/insert succeeded since the last check run
     int tty_fd = -1;                       // /dev/tty for approvals, -1 if none
     bool interactive = false;              // REPL (status lines, hints)
     struct {
@@ -67,7 +70,8 @@ public:
     std::string expand_mentions(const std::string& text) const;
 
 private:
-    std::string build_body(bool tools, const Json* extra_user = nullptr, int max_tokens = 0) const;
+    std::string build_body(bool tools, const Json* extra_user = nullptr, int max_tokens = 0,
+                           size_t count = (size_t)-1) const;
     void fit_context(bool mid_turn, size_t incoming_chars);
     size_t prune_history(size_t keep_recent);
     void drop_oldest();

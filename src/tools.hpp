@@ -27,10 +27,13 @@ ToolOutput tool_run(const std::string& name, const Json& args, size_t cap, int t
 // Undo for write/edit: files are backed up before they change. Backups are grouped per turn;
 // tool_undo() restores the newest group and returns the paths (errors are appended to `err`).
 void tool_new_turn();
+void tool_forget_reads();  // new conversation: the model has read nothing yet
 std::vector<std::string> tool_undo(std::string& err);
 
 // Exposed for tests.
 ToolOutput run_edit(const std::string& path, const std::string& old_s, const std::string& new_s, size_t cap = 4000);
+ToolOutput run_edits(const std::string& path, const std::vector<std::pair<std::string, std::string>>& list,
+                     size_t cap = 4000);
 ToolOutput run_insert(const std::string& path, long line, const std::string& text, size_t cap = 4000);
 ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap);
 ToolOutput run_search(const std::string& pattern, const std::string& path, const std::string& glob, bool icase,

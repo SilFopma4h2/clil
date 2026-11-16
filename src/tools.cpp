@@ -7,6 +7,7 @@
 #include <fnmatch.h>
 #include <regex.h>
 #include <poll.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <algorithm>
@@ -14,14 +15,15 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 
 static const char* kSchemas = R"([
-{"type":"function","function":{"name":"bash","description":"Run a shell command in the working directory (fresh non-interactive sh each call). Returns output and exit code.","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}},
+{"type":"function","function":{"name":"bash","description":"Run a non-interactive sh command in the working directory; returns output and exit code.","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}},
 {"type":"function","function":{"name":"read","description":"Read a text file, or list a directory.","parameters":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","description":"first line, 1-based"},"limit":{"type":"integer","description":"max lines"}},"required":["path"]}}},
-{"type":"function","function":{"name":"search","description":"Search file contents recursively with a regex (POSIX extended). Without pattern, list files matching glob. Skips .git, node_modules, build and binary files.","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","description":"directory or file, default ."},"glob":{"type":"string","description":"file name filter, e.g. *.cpp"},"ignore_case":{"type":"boolean"}}}}},
+{"type":"function","function":{"name":"search","description":"Search file contents recursively (POSIX extended regex); without pattern, list files matching glob. Skips ignored and binary files.","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","description":"directory or file, default ."},"glob":{"type":"string","description":"file name filter, e.g. *.cpp"},"ignore_case":{"type":"boolean"}}}}},
 {"type":"function","function":{"name":"write","description":"Create or overwrite a file.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
-{"type":"function","function":{"name":"insert","description":"Insert text after a line number (0 = top of file). Preferred way to ADD code: no old_string needed. Line numbers come from read.","parameters":{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer","description":"insert after this line; 0 = at the start"},"text":{"type":"string"}},"required":["path","line","text"]}}},
-{"type":"function","function":{"name":"edit","description":"Replace one exact, unique occurrence of old_string in a file with new_string. Use a short old_string (1-5 lines), without line-number prefixes. To only add code, use insert.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}}}
+{"type":"function","function":{"name":"insert","description":"Insert text after a line number from read (0 = top of file). Preferred way to ADD code: no old_string needed.","parameters":{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer"},"text":{"type":"string"}},"required":["path","line","text"]}}},
+{"type":"function","function":{"name":"edit","description":"Replace one exact, unique old_string with new_string. Keep old_string short (1-5 lines), no line-number prefixes. To only add code, use insert. Several changes to one file: pass edits (in order, all or none).","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["old_string","new_string"]}}},"required":["path"]}}}
 ])";
 
 Json tool_schemas() {
@@ -99,6 +101,20 @@ static std::vector<std::string> marked(const std::string& text, const char* mark
     return out;
 }
 
+// The pairs of an edit call's `edits` array; `bad` becomes the 1-based index of an item without new_string (else 0).
+static std::vector<std::pair<std::string, std::string>> edit_list(const Json& a, size_t& bad) {
+    std::vector<std::pair<std::string, std::string>> list;
+    bad = 0;
+    if (!a["edits"].is_arr()) return list;
+    for (auto& e : a["edits"].items()) {
+        bool has = false;
+        std::string nw = arg_str(e, {"new_string", "new"}, &has);
+        if (!has && !bad) bad = list.size() + 1;
+        list.emplace_back(arg_str(e, {"old_string", "old"}), nw);
+    }
+    return list;
+}
+
 std::string tool_title(const std::string& name, const Json& a) {
     if (mcp_owns(name)) return a.dump();
     if (name == "bash") {
@@ -124,9 +140,15 @@ std::string tool_title(const std::string& name, const Json& a) {
 std::vector<std::string> tool_change_preview(const std::string& name, const Json& a) {
     if (name == "write" || name == "insert") return marked(arg_str(a, {"content", "text"}), "+ ", 8);
     if (name == "edit") {
-        auto out = marked(arg_str(a, {"old_string", "old"}), "- ", 8);
-        auto add = marked(arg_str(a, {"new_string", "new"}), "+ ", 8);
-        out.insert(out.end(), add.begin(), add.end());
+        size_t bad;
+        auto list = edit_list(a, bad);
+        if (list.empty()) list.emplace_back(arg_str(a, {"old_string", "old"}), arg_str(a, {"new_string", "new"}));
+        std::vector<std::string> out;
+        for (auto& e : list) {
+            auto del = marked(e.first, "- ", 8), add = marked(e.second, "+ ", 8);
+            out.insert(out.end(), del.begin(), del.end());
+            out.insert(out.end(), add.begin(), add.end());
+        }
         return out;
     }
     if (name == "bash") {
@@ -137,6 +159,30 @@ std::vector<std::string> tool_change_preview(const std::string& name, const Json
 }
 
 // ------------------------------------------------------------------ read
+
+namespace {
+// path -> (mtime, size) as clil last read or wrote it.
+// shortcut: second-resolution mtime + size, so a same-size change within one second goes unnoticed; use st_mtimespec if that matters
+std::map<std::string, std::pair<long long, long long>> g_seen;
+
+std::pair<long long, long long> file_stamp(const std::string& p) {
+    struct stat st;
+    if (stat(p.c_str(), &st) != 0) return {-1, -1};
+    return {(long long)st.st_mtime, (long long)st.st_size};
+}
+void remember(const std::string& p) {
+    g_seen[p] = file_stamp(p);
+}
+std::string stale_note(const std::string& p) {
+    auto it = g_seen.find(p);
+    if (it == g_seen.end() || it->second == file_stamp(p)) return "";
+    return "\nNote: the file changed since you last read it (edited outside clil?); check that the result is right.";
+}
+}  // namespace
+
+void tool_forget_reads() {
+    g_seen.clear();
+}
 
 ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap) {
     std::string p = expand_home(path);
@@ -166,6 +212,7 @@ ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap
     }
     std::string data, err;
     if (!read_file(p, data, err)) return fail(err);
+    remember(p);
     if (memchr(data.data(), 0, std::min<size_t>(data.size(), 8192))) {
         o.text = fmt("(binary file, %zu bytes, not shown)", data.size());
         o.summary = "binary file";
@@ -291,6 +338,17 @@ static std::string strip_line_numbers(const std::string& s) {
     return out;
 }
 
+// The changed lines (first..first+n-1, 1-based) with 2 lines of context, in read's format.
+static std::string changed_lines(const std::string& data, size_t first, size_t n) {
+    auto lines = split_lines(data);
+    size_t from = first > 2 ? first - 2 : 1, to = std::min(lines.size(), first + std::min<size_t>(n, 12) + 1);
+    std::string out = "\n";
+    for (size_t i = from; i <= to; ++i)
+        out += fmt("%zu│", i) + utf8_clip(lines[i - 1], 200) + "\n";
+    if (n > 12) out += "[...]\n";
+    return out;
+}
+
 ToolOutput run_insert(const std::string& path, long line, const std::string& text, size_t cap) {
     std::string p = expand_home(path);
     if (p.empty()) return fail("missing 'path'");
@@ -310,29 +368,33 @@ ToolOutput run_insert(const std::string& path, long line, const std::string& tex
     }
     if (at == data.size() && at > 0 && data.back() != '\n') ins = "\n" + ins;
     data.insert(at, ins);
+    std::string note = stale_note(p);
     backup(p);
     if (!write_file(p, data, err)) return fail(err);
+    remember(p);
     (void)cap;
     ToolOutput o;
-    o.text = fmt("Inserted %zu lines into %s after line %ld", count_lines(ins), path.c_str(), line);
+    o.text = fmt("Inserted %zu lines into %s after line %ld", count_lines(ins), path.c_str(), line) +
+             changed_lines(data, (size_t)line + 1, count_lines(ins)) + note;
     o.summary = fmt("after line %ld: +%zu lines", line, count_lines(ins));
     return o;
 }
 
-ToolOutput run_edit(const std::string& path, const std::string& old_in, const std::string& new_in, size_t cap) {
+// Replaces the one place where old_in occurs in `data`. On failure `data` is untouched and `why` says what is wrong.
+static bool apply_edit(std::string& data, const std::string& old_in, const std::string& new_in, std::string& why,
+                       size_t& line) {
     std::string old_s = strip_line_numbers(old_in), new_s = strip_line_numbers(new_in);
-    std::string p = expand_home(path);
-    if (p.empty()) return fail("missing 'path'");
-    if (old_s.empty()) return fail("old_string is empty; use write to create a file");
-    std::string data, err;
-    if (!read_file(p, data, err)) return fail(err + "; the file was NOT changed");
-
+    if (old_s.empty()) {
+        why = "old_string is empty; use write to create a file";
+        return false;
+    }
     size_t at = std::string::npos, n = 0;
     for (size_t f = data.find(old_s); f != std::string::npos; f = data.find(old_s, f + 1))
         if (++n == 1) at = f;
-    if (n > 1)
-        return edit_fail(path, fmt("old_string occurs %zu times; include more surrounding lines to make it unique", n),
-                         data, old_s, cap);
+    if (n > 1) {
+        why = fmt("old_string occurs %zu times; include more surrounding lines to make it unique", n);
+        return false;
+    }
 
     size_t len = old_s.size();
     std::string repl = new_s;
@@ -361,11 +423,11 @@ ToolOutput run_edit(const std::string& path, const std::string& old_in, const st
             }
             if (ok) hits++, hit = i;
         }
-        if (hits != 1)
-            return edit_fail(path,
-                             hits ? fmt("old_string matches %zu places; include more lines", hits)
-                                  : std::string("old_string not found in the file"),
-                             data, old_s, cap);
+        if (hits != 1) {
+            why = hits ? fmt("old_string matches %zu places; include more lines", hits)
+                       : std::string("old_string not found in the file");
+            return false;
+        }
         at = starts[hit];
         size_t e = data.find('\n', starts[hit + k - 1]);
         len = (e == std::string::npos ? data.size() : e) - at;
@@ -375,12 +437,50 @@ ToolOutput run_edit(const std::string& path, const std::string& old_in, const st
             repl.erase(0, 1);
     }
     data.replace(at, len, repl);
+    line = 1 + (size_t)std::count(data.begin(), data.begin() + (long)at, '\n');
+    return true;
+}
+
+ToolOutput run_edit(const std::string& path, const std::string& old_in, const std::string& new_in, size_t cap) {
+    std::string p = expand_home(path);
+    if (p.empty()) return fail("missing 'path'");
+    if (strip_line_numbers(old_in).empty()) return fail("old_string is empty; use write to create a file");
+    std::string data, err, why;
+    if (!read_file(p, data, err)) return fail(err + "; the file was NOT changed");
+    size_t line = 0;
+    if (!apply_edit(data, old_in, new_in, why, line)) return edit_fail(path, why, data, strip_line_numbers(old_in), cap);
+    std::string note = stale_note(p);
     backup(p);
     if (!write_file(p, data, err)) return fail(err);
-    size_t line = 1 + (size_t)std::count(data.begin(), data.begin() + (long)at, '\n');
+    remember(p);
+    size_t del = count_lines(strip_line_numbers(old_in)), add = count_lines(strip_line_numbers(new_in));
     ToolOutput o;
-    o.text = fmt("Edited %s at line %zu (-%zu +%zu lines)", path.c_str(), line, count_lines(old_s), count_lines(new_s));
-    o.summary = fmt("line %zu: -%zu +%zu", line, count_lines(old_s), count_lines(new_s));
+    o.text = fmt("Edited %s at line %zu (-%zu +%zu lines)", path.c_str(), line, del, add) +
+             changed_lines(data, line, add) + note;
+    o.summary = fmt("line %zu: -%zu +%zu", line, del, add);
+    return o;
+}
+
+// All edits apply in order to the file as the previous ones left it, or none at all.
+ToolOutput run_edits(const std::string& path, const std::vector<std::pair<std::string, std::string>>& list,
+                     size_t cap) {
+    std::string p = expand_home(path);
+    if (p.empty()) return fail("missing 'path'");
+    std::string orig, err, why;
+    if (!read_file(p, orig, err)) return fail(err + "; the file was NOT changed");
+    std::string data = orig;
+    size_t line = 0;
+    for (size_t i = 0; i < list.size(); ++i)
+        if (!apply_edit(data, list[i].first, list[i].second, why, line))
+            return edit_fail(path, fmt("edit %zu of %zu: ", i + 1, list.size()) + why, orig,
+                             strip_line_numbers(list[i].first), cap);
+    std::string note = stale_note(p);
+    backup(p);
+    if (!write_file(p, data, err)) return fail(err);
+    remember(p);
+    ToolOutput o;
+    o.text = fmt("Edited %s: %zu edits applied (use read to see the result)", path.c_str(), list.size()) + note;
+    o.summary = plural(list.size(), "edit");
     return o;
 }
 
@@ -391,6 +491,7 @@ struct Search {
     regex_t re;
     bool has_re = false;
     std::string glob, out;
+    std::vector<std::string> ignore;  // file/dir names (fnmatch patterns) to skip
     size_t cap, matches = 0, files = 0;
     bool full = false;
 };
@@ -433,7 +534,11 @@ void search_dir(Search& s, const std::string& dir) {
     std::sort(names.begin(), names.end());
     for (auto& n : names) {
         if (s.full || g_interrupted) return;
-        if (n == "." || n == ".." || n == ".git" || n == "node_modules" || n == "build") continue;
+        if (n == "." || n == "..") continue;
+        bool skip = false;
+        for (auto& g : s.ignore)
+            skip |= fnmatch(g.c_str(), n.c_str(), 0) == 0;
+        if (skip) continue;
         std::string p = dir == "." ? n : dir + (dir.back() == '/' ? "" : "/") + n;
         if (is_dir(p))
             search_dir(s, p);
@@ -478,6 +583,16 @@ ToolOutput run_search(const std::string& pattern, const std::string& path, const
         s.has_re = true;
     }
     std::string p = path.empty() ? "." : expand_home(path);
+    s.ignore = {".git", "node_modules", "build", ".venv", "dist", "target", "__pycache__", ".cache"};
+    std::string gi, gerr;
+    // shortcut: only plain names/globs from the root .gitignore (no nested files, paths or "!" rules); upgrade if it hides too much or too little
+    if (is_dir(p) && read_file(p + "/.gitignore", gi, gerr))
+        for (auto& l : split_lines(gi)) {
+            std::string e = trim(l);
+            if (!e.empty() && e[0] == '/') e.erase(0, 1);
+            if (!e.empty() && e.back() == '/') e.pop_back();
+            if (!e.empty() && e[0] != '#' && e[0] != '!' && e.find('/') == std::string::npos) s.ignore.push_back(e);
+        }
     if (is_dir(p))
         search_dir(s, p);
     else if (is_file(p))
@@ -628,6 +743,7 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
         bool existed = is_file(p);
         backup(p);
         if (!write_file(p, content, err)) return fail(err);
+        remember(p);
         ToolOutput o;
         o.text = fmt("%s %s (%s)", existed ? "Overwrote" : "Created", path.c_str(),
                      plural(count_lines(content), "line").c_str());
@@ -642,6 +758,10 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
         return run_insert(path, arg_long(a, "line", 0), text, cap);
     }
     if (name == "edit") {
+        size_t bad;
+        auto list = edit_list(a, bad);
+        if (bad) return fail(fmt("edits[%zu] has no 'new_string'", bad - 1));
+        if (!list.empty()) return run_edits(path, list, cap);
         bool has_new = false;
         std::string nw = arg_str(a, {"new_string", "new"}, &has_new);
         if (!has_new) return fail("missing 'new_string'");
