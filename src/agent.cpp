@@ -533,8 +533,8 @@ int App::run_turn(const std::string& user_text) {
     msgs.push_back(message("user", user_text));
     long long gen_tokens = 0;
     double gen_secs = 0;
-    std::string last_sig;
-    int repeats = 0, rc = 0, nudges = 0;
+    std::string last_sig, fail_key;
+    int repeats = 0, rc = 0, nudges = 0, fails = 0;
 
     for (int step = 0;; ++step) {
         if (step >= cfg.max_steps) {
@@ -631,6 +631,14 @@ int App::run_turn(const std::string& user_text) {
         bool stop = false;
         for (auto& c : calls) {
             std::string result = stop ? "Skipped: the user stopped this turn." : exec_tool(c, stop);
+            // Same tool failing on the same target with varying arguments: the exact-repeat check misses it.
+            Json a;
+            Json::parse(c.args, a);
+            std::string key = c.name + " " + tool_title(c.name, a);
+            if (starts_with(result, "Error"))
+                fails = key == fail_key ? fails + 1 : 1, fail_key = key;
+            else
+                fails = 0;
             Json tm = message("tool", result);
             tm.set("tool_call_id", c.id);
             msgs.push_back(tm);
@@ -638,6 +646,10 @@ int App::run_turn(const std::string& user_text) {
         if (stop) {
             rc = g_interrupted ? 130 : 0;
             g_interrupted = 0;
+            break;
+        }
+        if (fails >= 3) {
+            warn("the model keeps failing on " + fail_key + "; stopping");
             break;
         }
         std::string sig;

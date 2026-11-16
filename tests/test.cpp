@@ -538,6 +538,39 @@ static void test_context_budget() {
     }
 }
 
+// Three failing edits of one file with different arguments end the turn; no 4th request is made.
+static void test_fail_stop(const std::string& dir) {
+    auto edit_call = [&](int i) {
+        Json args = Json::object();
+        args.set("path", dir + "/no-such-file.txt").set("old_string", fmt("v%d", i)).set("new_string", "x");
+        Json fn = Json::object();
+        fn.set("name", "edit").set("arguments", args.dump());
+        Json tc = Json::object();
+        tc.set("index", 0).set("id", fmt("call%d", i)).set("function", fn);
+        Json delta = Json::object();
+        delta.set("tool_calls", Json::array().push(tc));
+        Json ch = Json::object();
+        ch.set("index", 0).set("delta", delta);
+        Json ev = Json::object();
+        ev.set("choices", Json::array().push(ch));
+        return sse_response({ev.dump()}, 64, 4096);
+    };
+    Server s = serve({edit_call(1), edit_call(2), edit_call(3)});
+    App app;
+    app.lm.ep = s.ep;
+    app.lm.api = 2;
+    app.cfg.model = "m";
+    app.cfg.yes = true;
+    app.reset_conversation();
+    CHECK(app.run_turn("fix it") == 0);
+    CHECK(app.msgs.back()["role"].str() == "tool");
+    std::string req = s.requests();
+    size_t n = 0;
+    for (size_t p = req.find("\n----\n"); p != std::string::npos; p = req.find("\n----\n", p + 1))
+        ++n;
+    CHECK(n == 3);
+}
+
 static void test_cd(const std::string& dir) {
     App app;
     app.reset_conversation();
@@ -681,6 +714,7 @@ int main(int argc, char** argv) {
     test_reply_helpers();
     test_save_resume(dir);
     test_context_budget();
+    test_fail_stop(dir);
     test_cd(dir);
     test_state();
     test_mcp(dir);
