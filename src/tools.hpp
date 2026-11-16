@@ -27,6 +27,7 @@ ToolOutput tool_run(const std::string& name, const Json& args, size_t cap, int t
 // Undo for write/edit: files are backed up before they change. Backups are grouped per turn;
 // tool_undo() restores the newest group and returns the paths (errors are appended to `err`).
 void tool_new_turn();
+void tool_forget_reads();  // new conversation: the model has read nothing yet
 std::vector<std::string> tool_undo(std::string& err);
 
 // Exposed for tests.

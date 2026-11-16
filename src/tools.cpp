@@ -7,6 +7,7 @@
 #include <fnmatch.h>
 #include <regex.h>
 #include <poll.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 
 static const char* kSchemas = R"([
 {"type":"function","function":{"name":"bash","description":"Run a non-interactive sh command in the working directory; returns output and exit code.","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}},
@@ -158,6 +160,30 @@ std::vector<std::string> tool_change_preview(const std::string& name, const Json
 
 // ------------------------------------------------------------------ read
 
+namespace {
+// path -> (mtime, size) as clil last read or wrote it.
+// shortcut: second-resolution mtime + size, so a same-size change within one second goes unnoticed; use st_mtimespec if that matters
+std::map<std::string, std::pair<long long, long long>> g_seen;
+
+std::pair<long long, long long> file_stamp(const std::string& p) {
+    struct stat st;
+    if (stat(p.c_str(), &st) != 0) return {-1, -1};
+    return {(long long)st.st_mtime, (long long)st.st_size};
+}
+void remember(const std::string& p) {
+    g_seen[p] = file_stamp(p);
+}
+std::string stale_note(const std::string& p) {
+    auto it = g_seen.find(p);
+    if (it == g_seen.end() || it->second == file_stamp(p)) return "";
+    return "\nNote: the file changed since you last read it (edited outside clil?); check that the result is right.";
+}
+}  // namespace
+
+void tool_forget_reads() {
+    g_seen.clear();
+}
+
 ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap) {
     std::string p = expand_home(path);
     if (p.empty()) return fail("missing 'path'");
@@ -186,6 +212,7 @@ ToolOutput run_read(const std::string& path, long offset, long limit, size_t cap
     }
     std::string data, err;
     if (!read_file(p, data, err)) return fail(err);
+    remember(p);
     if (memchr(data.data(), 0, std::min<size_t>(data.size(), 8192))) {
         o.text = fmt("(binary file, %zu bytes, not shown)", data.size());
         o.summary = "binary file";
@@ -341,12 +368,14 @@ ToolOutput run_insert(const std::string& path, long line, const std::string& tex
     }
     if (at == data.size() && at > 0 && data.back() != '\n') ins = "\n" + ins;
     data.insert(at, ins);
+    std::string note = stale_note(p);
     backup(p);
     if (!write_file(p, data, err)) return fail(err);
+    remember(p);
     (void)cap;
     ToolOutput o;
     o.text = fmt("Inserted %zu lines into %s after line %ld", count_lines(ins), path.c_str(), line) +
-             changed_lines(data, (size_t)line + 1, count_lines(ins));
+             changed_lines(data, (size_t)line + 1, count_lines(ins)) + note;
     o.summary = fmt("after line %ld: +%zu lines", line, count_lines(ins));
     return o;
 }
@@ -420,11 +449,14 @@ ToolOutput run_edit(const std::string& path, const std::string& old_in, const st
     if (!read_file(p, data, err)) return fail(err + "; the file was NOT changed");
     size_t line = 0;
     if (!apply_edit(data, old_in, new_in, why, line)) return edit_fail(path, why, data, strip_line_numbers(old_in), cap);
+    std::string note = stale_note(p);
     backup(p);
     if (!write_file(p, data, err)) return fail(err);
+    remember(p);
     size_t del = count_lines(strip_line_numbers(old_in)), add = count_lines(strip_line_numbers(new_in));
     ToolOutput o;
-    o.text = fmt("Edited %s at line %zu (-%zu +%zu lines)", path.c_str(), line, del, add) + changed_lines(data, line, add);
+    o.text = fmt("Edited %s at line %zu (-%zu +%zu lines)", path.c_str(), line, del, add) +
+             changed_lines(data, line, add) + note;
     o.summary = fmt("line %zu: -%zu +%zu", line, del, add);
     return o;
 }
@@ -442,10 +474,12 @@ ToolOutput run_edits(const std::string& path, const std::vector<std::pair<std::s
         if (!apply_edit(data, list[i].first, list[i].second, why, line))
             return edit_fail(path, fmt("edit %zu of %zu: ", i + 1, list.size()) + why, orig,
                              strip_line_numbers(list[i].first), cap);
+    std::string note = stale_note(p);
     backup(p);
     if (!write_file(p, data, err)) return fail(err);
+    remember(p);
     ToolOutput o;
-    o.text = fmt("Edited %s: %zu edits applied (use read to see the result)", path.c_str(), list.size());
+    o.text = fmt("Edited %s: %zu edits applied (use read to see the result)", path.c_str(), list.size()) + note;
     o.summary = plural(list.size(), "edit");
     return o;
 }
@@ -709,6 +743,7 @@ ToolOutput tool_run(const std::string& name, const Json& a, size_t cap, int time
         bool existed = is_file(p);
         backup(p);
         if (!write_file(p, content, err)) return fail(err);
+        remember(p);
         ToolOutput o;
         o.text = fmt("%s %s (%s)", existed ? "Overwrote" : "Created", path.c_str(),
                      plural(count_lines(content), "line").c_str());

@@ -372,6 +372,16 @@ static void test_tools(const std::string& dir) {
     o = run_search("(", dir, "", false, 1000);
     CHECK(o.error);
 
+    // edit after an outside change since the last read gets a note, once
+    std::string sf = dir + "/stale.txt";
+    write_file(sf, "alpha\n", err);
+    run_read(sf, 0, 0, 1000);
+    write_file(sf, "alpha\nbeta\n", err);  // changed outside clil
+    o = run_edit(sf, "alpha", "ALPHA");
+    CHECK(!o.error && o.text.find("changed since") != std::string::npos);
+    o = run_edit(sf, "beta", "BETA");
+    CHECK(!o.error && o.text.find("changed since") == std::string::npos);
+
     // ignored: built-in names and the root .gitignore
     std::string ig = dir + "/ig";
     write_file(ig + "/.gitignore", "# c\nout/\n*.log\n!keep.log\n", err);

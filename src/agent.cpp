@@ -76,6 +76,7 @@ std::string App::system_prompt() const {
 
 void App::reset_conversation() {
     msgs.clear();
+    tool_forget_reads();
     msgs.push_back(message("system", system_prompt()));
     ctx_used = -1;
     ctx_used_msgs = 0;
