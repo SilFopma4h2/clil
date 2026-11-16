@@ -314,6 +314,20 @@ static void test_tools(const std::string& dir) {
     CHECK(!o.error);
     read_file(f, data, err);
     CHECK_EQ(data, std::string("top\nONE\nTWO\nmid\nthree\nTHREE\nend\n"));
+    o = run_edits(f, {{"mid", "MID"}, {"nope", "x"}});  // one bad edit: nothing is applied
+    CHECK(o.error && o.text.find("edit 2 of 2") != std::string::npos);
+    read_file(f, data, err);
+    CHECK_EQ(data, std::string("top\nONE\nTWO\nmid\nthree\nTHREE\nend\n"));
+    o = run_edits(f, {{"mid", "MID"}, {"end", "END"}});
+    CHECK(!o.error);
+    read_file(f, data, err);
+    CHECK_EQ(data, std::string("top\nONE\nTWO\nMID\nthree\nTHREE\nEND\n"));
+    {
+        Json call;
+        Json::parse("{\"path\":\"" + f + "\",\"edits\":[{\"old_string\":\"mid\",\"new_string\":\"MID\"},{\"old_string\":\"end\"}]}", call);
+        o = tool_run("edit", call, 4000, 5);
+        CHECK(o.error && o.text.find("edits[1]") != std::string::npos);
+    }
     {
         Json none;
         Json::parse("{}", none);
