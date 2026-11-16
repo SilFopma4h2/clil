@@ -496,6 +496,21 @@ static void test_context_budget() {
         CHECK_EQ(app.msgs[3]["content"].str(), std::string("next"));
         CHECK_EQ(app.msgs[4]["content"].str(), std::string("fine"));
     }
+
+    // 3) /compact keeps the last two user turns verbatim
+    Server k = serve({answer("- older work")});
+    app.lm.ep = k.ep;
+    app.ctx_len = 8000;
+    fill_history(app, 6, 100);
+    CHECK(app.compact(false));
+    req = k.requests();
+    CHECK(req.find("step 3") != std::string::npos);
+    CHECK(req.find("step 4") == std::string::npos);
+    CHECK(app.msgs.size() == 3 + 8);  // sys, summary, ack, then 2 turns x (user, assistant, tool, assistant)
+    if (app.msgs.size() == 11) {
+        CHECK(app.msgs[1]["content"].str().find("- older work") != std::string::npos);
+        CHECK_EQ(app.msgs[3]["content"].str(), std::string("step 4"));
+    }
 }
 
 static void test_cd(const std::string& dir) {

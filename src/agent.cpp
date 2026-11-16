@@ -81,11 +81,11 @@ void App::reset_conversation() {
     ctx_used_msgs = 0;
 }
 
-std::string App::build_body(bool tools, const Json* extra_user, int max_tokens) const {
+std::string App::build_body(bool tools, const Json* extra_user, int max_tokens, size_t count) const {
     std::string b = "{\"model\":";
     json_quote(b, cfg.model);
     b += ",\"messages\":[";
-    for (size_t i = 0; i < msgs.size(); ++i) {
+    for (size_t i = 0; i < msgs.size() && i < count; ++i) {
         if (i) b += ',';
         msgs[i].dump_to(b);
     }
@@ -196,7 +196,9 @@ void App::fit_context(bool mid_turn, size_t incoming) {
                  human_ctx(ctx_len).c_str(), n, human_tokens(after).c_str()));
     if (after <= limit) return;
     if (compact(true)) {
-        if (mid_turn) msgs.push_back(message("user", "Continue with the task."));
+        // A kept tail ends in a tool result, so only a full summary needs the nudge.
+        if (mid_turn && msgs.back()["role"].str() == "assistant")
+            msgs.push_back(message("user", "Continue with the task."));
     } else {
         drop_oldest();
     }
@@ -208,6 +210,15 @@ bool App::compact(bool automatic) {
         return false;
     }
     long long before = estimate_tokens();
+    // Keep the last two user turns verbatim, unless that tail is itself big.
+    size_t keep = msgs.size(), users = 0, tail_chars = 0;
+    for (size_t i = msgs.size(); i-- > 1;) {
+        tail_chars += message_chars(msgs[i]);
+        if (msgs[i]["role"].str() == "user" && ++users == 2) {
+            if (i > 1 && (double)tail_chars / 3.5 <= (ctx_len > 0 ? ctx_len : 8192) / 4.0) keep = i;
+            break;
+        }
+    }
     // Same prefix as the normal requests (tools included) so LM Studio can reuse its prompt
     // cache; only trim old tool output when the summary request would not fit otherwise.
     if (ctx_len > 0 && before + 1400 > ctx_len) prune_history(1);
@@ -223,7 +234,7 @@ bool App::compact(bool automatic) {
         sp.label(n ? fmt("waiting for %s", plural((size_t)n, "other clil").c_str()) : "compacting conversation");
         sp.tick();
     };
-    ChatReply rep = lm.chat(build_body(cfg.tools, &ask, 1024), ev);
+    ChatReply rep = lm.chat(build_body(cfg.tools, &ask, 1024, keep), ev);
     sp.stop();
     std::string summary = strip_think(rep.content);
     if (rep.interrupted || !rep.error.empty() || summary.empty()) {
@@ -231,9 +242,11 @@ bool App::compact(bool automatic) {
         warn("compaction failed" + (rep.error.empty() ? std::string() : ": " + rep.error));
         return false;
     }
+    std::vector<Json> tail(msgs.begin() + (long)keep, msgs.end());
     Json sys = msgs[0];
     msgs = {sys, message("user", "Summary of our conversation so far:\n" + summary),
             message("assistant", "Understood. I'll continue from there.")};
+    msgs.insert(msgs.end(), tail.begin(), tail.end());
     ctx_used = -1;
     note(fmt("compacted conversation: ~%s → ~%s tokens", human_tokens(before).c_str(),
              human_tokens(estimate_tokens()).c_str()));

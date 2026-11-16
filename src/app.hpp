@@ -67,7 +67,8 @@ public:
     std::string expand_mentions(const std::string& text) const;
 
 private:
-    std::string build_body(bool tools, const Json* extra_user = nullptr, int max_tokens = 0) const;
+    std::string build_body(bool tools, const Json* extra_user = nullptr, int max_tokens = 0,
+                           size_t count = (size_t)-1) const;
     void fit_context(bool mid_turn, size_t incoming_chars);
     size_t prune_history(size_t keep_recent);
     void drop_oldest();
