@@ -619,6 +619,13 @@ static void test_check(const std::string& dir) {
     CHECK(request_count(req) == 4);
     CHECK(req.find("failed after your changes") != std::string::npos);
     CHECK_EQ(app.msgs.back()["content"].str(), std::string("done"));
+
+    // --draft is passed to LM Studio as draft_model
+    Server d = serve({answer_sse("hi")});
+    app.lm.ep = d.ep;
+    app.cfg.draft = "tiny-draft";
+    CHECK(app.run_turn("hello") == 0);
+    CHECK(d.requests().find("\"draft_model\":\"tiny-draft\"") != std::string::npos);
 }
 
 static void test_cd(const std::string& dir) {

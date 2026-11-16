@@ -16,6 +16,7 @@ struct Settings {
     std::string model;         // id sent as "model" (instance id or model key)
     std::string system_extra;  // -s / /system
     std::string check;         // --check / CLIL_CHECK / /check: run after a turn that changed files
+    std::string draft;         // --draft / /draft: LM Studio draft model for speculative decoding
     double temperature = -1;   // < 0: model default
     int max_tokens = 0;        // 0: unlimited
     int load_ctx = 0;          // context length for /load and auto-load (0: LM Studio default)

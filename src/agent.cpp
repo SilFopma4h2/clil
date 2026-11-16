@@ -100,6 +100,10 @@ std::string App::build_body(bool tools, const Json* extra_user, int max_tokens, 
         tool_schema_cache().dump_to(b);
     }
     b += ",\"stream\":true,\"stream_options\":{\"include_usage\":true}";
+    if (!cfg.draft.empty()) {
+        b += ",\"draft_model\":";
+        json_quote(b, cfg.draft);
+    }
     if (cfg.temperature >= 0) b += fmt(",\"temperature\":%.3g", cfg.temperature);
     int mt = max_tokens ? max_tokens : cfg.max_tokens;
     if (mt > 0) b += fmt(",\"max_tokens\":%d", mt);

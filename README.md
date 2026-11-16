@@ -111,6 +111,7 @@ clil /models                           # any slash command works one-shot too
 | `/ctx` | context usage |
 | `/system [text\|off]` | extra system instructions |
 | `/temp [x\|off]` | temperature |
+| `/draft [name\|off]` | draft model for speculative decoding: faster replies, same output |
 | `/check [cmd\|off]` | command run after the model changed files (e.g. `make -s`); a failure goes back to the model, twice at most |
 | `/status` | server, model, context, slots, MCP servers, other clil's and working directory |
 | `/stats` | replies, tokens, tok/s and generation time this session |
@@ -216,6 +217,7 @@ quit.
     --timeout SEC    limit per shell command (default 180)
     --max-steps N    tool rounds per message (default 40)
     --check CMD      run CMD after the model changed files; failures go back to it (env CLIL_CHECK)
+    --draft NAME     draft model for speculative decoding (same model family; LM Studio refuses it for batched MLX models)
 -q, --quiet          no status line or tool output previews
     --no-color       no colours (NO_COLOR is honoured too)
 ```

@@ -41,6 +41,7 @@ static void usage() {
            "      --max-steps N    tool rounds per message (default 40)\n"
            "      --check CMD      run CMD (e.g. \"make -s\") after the model changed files; failures go back to it\n"
            "                       (env CLIL_CHECK)\n"
+           "      --draft NAME     draft model for speculative decoding (small model of the same family)\n"
            "  -q, --quiet          no status line or tool output previews\n"
            "      --no-color       disable colours (also NO_COLOR)\n"
            "  -V, --version\n"
@@ -154,6 +155,8 @@ int main(int argc, char** argv) {
             app.cfg.timeout_s = atoi(val().c_str());
         else if (s == "--check")
             app.cfg.check = val();
+        else if (s == "--draft")
+            app.cfg.draft = val();
         else if (s == "--max-steps")
             app.cfg.max_steps = std::max(1, atoi(val().c_str()));
         else if (s == "-q" || s == "--quiet")
