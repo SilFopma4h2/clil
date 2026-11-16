@@ -507,7 +507,7 @@ std::string App::exec_tool(const ToolCall& c, bool& stop) {
         if (o.error)
             failed_changes.insert(path);
         else
-            failed_changes.erase(path);
+            failed_changes.erase(path), changed = true;
     }
     fprintf(stderr, "  %s└ %s%s\n", ce(o.error ? ansi::red : ansi::dim), o.summary.c_str(), ce(ansi::reset));
     if (!cfg.quiet)
@@ -528,6 +528,7 @@ int App::run_turn(const std::string& user_text) {
     if (!ensure_model_ready()) return 1;
 
     failed_changes.clear();
+    changed = false;
     tool_new_turn();
     fit_context(false, user_text.size());
     size_t turn_start = msgs.size();
@@ -535,7 +536,7 @@ int App::run_turn(const std::string& user_text) {
     long long gen_tokens = 0;
     double gen_secs = 0;
     std::string last_sig, fail_key;
-    int repeats = 0, rc = 0, nudges = 0, fails = 0;
+    int repeats = 0, rc = 0, nudges = 0, fails = 0, checks = 0;
 
     for (int step = 0;; ++step) {
         if (step >= cfg.max_steps) {
@@ -623,6 +624,21 @@ int App::run_turn(const std::string& user_text) {
                                                "tool again, copying old_string exactly from the file content shown "
                                                "in the error (or use write with the full new content)."));
             continue;
+        }
+        if (calls.empty() && changed && !cfg.check.empty()) {
+            // The model is done and changed files: run the user's check and send failures back (twice at most).
+            changed = false;
+            ToolOutput o = run_bash(cfg.check, tool_cap(), cfg.timeout_s);
+            if (!o.error) {
+                note("  ✓ " + cfg.check);
+            } else if (!g_interrupted && checks++ < 2 && step + 1 < cfg.max_steps) {
+                note("  ✗ " + cfg.check + " failed; asking the model to fix it");
+                msgs.push_back(message("user", "The check `" + cfg.check + "` failed after your changes:\n" + o.text +
+                                                   "\nFix the problem."));
+                continue;
+            } else {
+                warn("check failed: " + cfg.check);
+            }
         }
         if (calls.empty()) {
             if (rep.finish == "length") warn("reply was cut off (token limit reached)");

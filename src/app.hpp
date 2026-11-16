@@ -15,6 +15,7 @@
 struct Settings {
     std::string model;         // id sent as "model" (instance id or model key)
     std::string system_extra;  // -s / /system
+    std::string check;         // --check / CLIL_CHECK / /check: run after a turn that changed files
     double temperature = -1;   // < 0: model default
     int max_tokens = 0;        // 0: unlimited
     int load_ctx = 0;          // context length for /load and auto-load (0: LM Studio default)
@@ -35,6 +36,7 @@ public:
     size_t ctx_used_msgs = 0;
     std::set<std::string> always_allow;
     std::set<std::string> failed_changes;  // files whose write/edit failed this turn
+    bool changed = false;                  // a write/edit/insert succeeded since the last check run
     int tty_fd = -1;                       // /dev/tty for approvals, -1 if none
     bool interactive = false;              // REPL (status lines, hints)
     struct {

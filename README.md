@@ -111,6 +111,7 @@ clil /models                           # any slash command works one-shot too
 | `/ctx` | context usage |
 | `/system [text\|off]` | extra system instructions |
 | `/temp [x\|off]` | temperature |
+| `/check [cmd\|off]` | command run after the model changed files (e.g. `make -s`); a failure goes back to the model, twice at most |
 | `/status` | server, model, context, slots, MCP servers, other clil's and working directory |
 | `/stats` | replies, tokens, tok/s and generation time this session |
 | `/copy` | copy the last reply to the clipboard (`pbcopy`, `wl-copy` or `xclip`) |
@@ -171,7 +172,7 @@ yours or not private, clil works without coordination.
 |---|---|---|
 | `read` | read a file (with `offset` / `limit`) or list a directory | no |
 | `write` | create or overwrite a file (creates parent directories) | yes |
-| `edit` | replace one exact, unique snippet; tolerates indentation drift | yes |
+| `edit` | replace one exact, unique snippet (or several at once with `edits`, all or none); tolerates indentation drift | yes |
 | `bash` | run `sh -c` in the working directory, non-interactive, with a timeout | yes |
 
 Before asking, clil shows the change: a diff for `edit`, the start of the
@@ -214,6 +215,7 @@ quit.
     --no-think       hide reasoning (shows a spinner with a token count instead)
     --timeout SEC    limit per shell command (default 180)
     --max-steps N    tool rounds per message (default 40)
+    --check CMD      run CMD after the model changed files; failures go back to it (env CLIL_CHECK)
 -q, --quiet          no status line or tool output previews
     --no-color       no colours (NO_COLOR is honoured too)
 ```

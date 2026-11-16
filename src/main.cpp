@@ -39,6 +39,8 @@ static void usage() {
            "      --no-think       hide the model's reasoning\n"
            "      --timeout SEC    limit per shell command (default 180)\n"
            "      --max-steps N    tool rounds per message (default 40)\n"
+           "      --check CMD      run CMD (e.g. \"make -s\") after the model changed files; failures go back to it\n"
+           "                       (env CLIL_CHECK)\n"
            "  -q, --quiet          no status line or tool output previews\n"
            "      --no-color       disable colours (also NO_COLOR)\n"
            "  -V, --version\n"
@@ -110,6 +112,7 @@ int main(int argc, char** argv) {
     if (const char* t = getenv("LM_API_TOKEN")) app.lm.ep.token = t;
     if (const char* n = getenv("CLIL_SLOTS")) app.lm.slots = atoi(n);
     if (const char* m = getenv("LMSTUDIO_MODEL")) app.cfg.model = m;
+    if (const char* c = getenv("CLIL_CHECK")) app.cfg.check = c;
     bool no_color = getenv("NO_COLOR") && *getenv("NO_COLOR");
 
     std::vector<std::string> words;
@@ -149,6 +152,8 @@ int main(int argc, char** argv) {
             app.cfg.think = false;
         else if (s == "--timeout")
             app.cfg.timeout_s = atoi(val().c_str());
+        else if (s == "--check")
+            app.cfg.check = val();
         else if (s == "--max-steps")
             app.cfg.max_steps = std::max(1, atoi(val().c_str()));
         else if (s == "-q" || s == "--quiet")

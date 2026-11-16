@@ -548,22 +548,43 @@ static void test_context_budget() {
     }
 }
 
+// A streamed reply that calls one tool, and one that only answers.
+static std::vector<std::string> tool_sse(const std::string& name, const Json& args) {
+    static int id = 0;
+    Json fn = Json::object();
+    fn.set("name", name).set("arguments", args.dump());
+    Json tc = Json::object();
+    tc.set("index", 0).set("id", fmt("call%d", ++id)).set("function", fn);
+    Json delta = Json::object();
+    delta.set("tool_calls", Json::array().push(tc));
+    Json ch = Json::object();
+    ch.set("index", 0).set("delta", delta);
+    Json ev = Json::object();
+    ev.set("choices", Json::array().push(ch));
+    return sse_response({ev.dump()}, 64, 4096);
+}
+static std::vector<std::string> answer_sse(const std::string& text) {
+    Json delta = Json::object();
+    delta.set("content", text);
+    Json ch = Json::object();
+    ch.set("index", 0).set("delta", delta);
+    Json ev = Json::object();
+    ev.set("choices", Json::array().push(ch));
+    return sse_response({ev.dump()}, 64, 4096);
+}
+static size_t request_count(const std::string& req) {
+    size_t n = 0;
+    for (size_t p = req.find("\n----\n"); p != std::string::npos; p = req.find("\n----\n", p + 1))
+        ++n;
+    return n;
+}
+
 // Three failing edits of one file with different arguments end the turn; no 4th request is made.
 static void test_fail_stop(const std::string& dir) {
     auto edit_call = [&](int i) {
         Json args = Json::object();
         args.set("path", dir + "/no-such-file.txt").set("old_string", fmt("v%d", i)).set("new_string", "x");
-        Json fn = Json::object();
-        fn.set("name", "edit").set("arguments", args.dump());
-        Json tc = Json::object();
-        tc.set("index", 0).set("id", fmt("call%d", i)).set("function", fn);
-        Json delta = Json::object();
-        delta.set("tool_calls", Json::array().push(tc));
-        Json ch = Json::object();
-        ch.set("index", 0).set("delta", delta);
-        Json ev = Json::object();
-        ev.set("choices", Json::array().push(ch));
-        return sse_response({ev.dump()}, 64, 4096);
+        return tool_sse("edit", args);
     };
     Server s = serve({edit_call(1), edit_call(2), edit_call(3)});
     App app;
@@ -574,11 +595,30 @@ static void test_fail_stop(const std::string& dir) {
     app.reset_conversation();
     CHECK(app.run_turn("fix it") == 0);
     CHECK(app.msgs.back()["role"].str() == "tool");
+    CHECK(request_count(s.requests()) == 3);
+}
+
+// --check: a failing check after the model is done goes back to it; a passing one ends the turn.
+static void test_check(const std::string& dir) {
+    std::string f = dir + "/checked.txt";
+    auto write_call = [&](const char* content) {
+        Json args = Json::object();
+        args.set("path", f).set("content", content);
+        return tool_sse("write", args);
+    };
+    Server s = serve({write_call("bad"), answer_sse("done"), write_call("good"), answer_sse("done")});
+    App app;
+    app.lm.ep = s.ep;
+    app.lm.api = 2;
+    app.cfg.model = "m";
+    app.cfg.yes = true;
+    app.cfg.check = "grep -q good " + f;
+    app.reset_conversation();
+    CHECK(app.run_turn("make it good") == 0);
     std::string req = s.requests();
-    size_t n = 0;
-    for (size_t p = req.find("\n----\n"); p != std::string::npos; p = req.find("\n----\n", p + 1))
-        ++n;
-    CHECK(n == 3);
+    CHECK(request_count(req) == 4);
+    CHECK(req.find("failed after your changes") != std::string::npos);
+    CHECK_EQ(app.msgs.back()["content"].str(), std::string("done"));
 }
 
 static void test_cd(const std::string& dir) {
@@ -725,6 +765,7 @@ int main(int argc, char** argv) {
     test_save_resume(dir);
     test_context_budget();
     test_fail_stop(dir);
+    test_check(dir);
     test_cd(dir);
     test_state();
     test_mcp(dir);
