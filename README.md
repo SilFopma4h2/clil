@@ -215,7 +215,6 @@ quit.
     --no-tools       plain chat
     --no-think       hide reasoning (shows a spinner with a token count instead)
     --timeout SEC    limit per shell command (default 180)
-    --max-steps N    tool rounds per message (default 40)
     --check CMD      run CMD after the model changed files; failures go back to it (env CLIL_CHECK)
     --draft NAME     draft model for speculative decoding (same model family; LM Studio refuses it for batched MLX models)
 -q, --quiet          no status line or tool output previews
