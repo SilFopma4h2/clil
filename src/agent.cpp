@@ -541,6 +541,7 @@ int App::run_turn(const std::string& user_text) {
     double gen_secs = 0;
     std::string last_sig, fail_key;
     int repeats = 0, rc = 0, nudges = 0, fails = 0, checks = 0;
+    bool empty_nudged = false;
 
     for (int step = 0;; ++step) {
         if (step >= cfg.max_steps) {
@@ -627,6 +628,15 @@ int App::run_turn(const std::string& user_text) {
                                                " FAILED, so the file is unchanged. Do not claim it worked. Call the "
                                                "tool again, copying old_string exactly from the file content shown "
                                                "in the error (or use write with the full new content)."));
+            continue;
+        }
+        if (calls.empty() && clean.empty() && !pr.answered() && rep.finish != "length" && !empty_nudged &&
+            step + 1 < cfg.max_steps) {
+            // Thinking models sometimes stop after their reasoning without acting: ask once to go on.
+            empty_nudged = true;
+            note("  ↻ empty reply; asking the model to continue");
+            msgs.pop_back();
+            msgs.push_back(message("user", "Continue with the task."));
             continue;
         }
         if (calls.empty() && changed && !cfg.check.empty()) {

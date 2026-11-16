@@ -620,6 +620,13 @@ static void test_check(const std::string& dir) {
     CHECK(req.find("failed after your changes") != std::string::npos);
     CHECK_EQ(app.msgs.back()["content"].str(), std::string("done"));
 
+    // an empty reply gets one "continue" nudge
+    Server e = serve({answer_sse(""), answer_sse("done")});
+    app.lm.ep = e.ep;
+    CHECK(app.run_turn("go on") == 0);
+    CHECK(request_count(e.requests()) == 2);
+    CHECK_EQ(app.msgs.back()["content"].str(), std::string("done"));
+
     // --draft is passed to LM Studio as draft_model
     Server d = serve({answer_sse("hi")});
     app.lm.ep = d.ep;
