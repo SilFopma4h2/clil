@@ -21,7 +21,6 @@ struct Settings {
     int max_tokens = 0;        // 0: unlimited
     int load_ctx = 0;          // context length for /load and auto-load (0: LM Studio default)
     int timeout_s = 180;       // per bash command
-    int max_steps = 40;        // tool rounds per turn
     bool tools = true, yes = false, think = true, quiet = false;
 };
 

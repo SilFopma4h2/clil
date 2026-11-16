@@ -12,7 +12,7 @@ task() {
     d=$(mktemp -d)
     (cd "$d" && sh -c "$2")
     t0=$(date +%s)
-    (cd "$d" && "$CLIL" -y --max-steps 15 "${OPTS[@]}" "$3" </dev/null >out.log 2>err.log)
+    (cd "$d" && "$CLIL" -y "${OPTS[@]}" "$3" </dev/null >out.log 2>err.log)
     t=$(($(date +%s) - t0))
     n=$(grep -c '●' "$d/err.log")
     if (cd "$d" && sh -c "$4") >/dev/null 2>&1; then ok=pass pass=$((pass + 1)); else ok=FAIL; fi

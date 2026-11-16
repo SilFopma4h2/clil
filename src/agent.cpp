@@ -544,10 +544,6 @@ int App::run_turn(const std::string& user_text) {
     bool empty_nudged = false;
 
     for (int step = 0;; ++step) {
-        if (step >= cfg.max_steps) {
-            warn(fmt("stopped after %d tool rounds (raise with --max-steps)", cfg.max_steps));
-            break;
-        }
         if (step > 0) fit_context(true, 0);
         Spinner sp;
         sp.start(step ? "working" : "thinking");
@@ -617,7 +613,7 @@ int App::run_turn(const std::string& user_text) {
         msgs.push_back(am);
         if (rep.prompt_tokens >= 0) ctx_used_msgs = msgs.size();
 
-        if (calls.empty() && !failed_changes.empty() && nudges < 2 && step + 1 < cfg.max_steps) {
+        if (calls.empty() && !failed_changes.empty() && nudges < 2) {
             // It wants to stop although a file change failed: send it back once or twice.
             ++nudges;
             std::string paths;
@@ -630,8 +626,7 @@ int App::run_turn(const std::string& user_text) {
                                                "in the error (or use write with the full new content)."));
             continue;
         }
-        if (calls.empty() && clean.empty() && !pr.answered() && rep.finish != "length" && !empty_nudged &&
-            step + 1 < cfg.max_steps) {
+        if (calls.empty() && clean.empty() && !pr.answered() && rep.finish != "length" && !empty_nudged) {
             // Thinking models sometimes stop after their reasoning without acting: ask once to go on.
             empty_nudged = true;
             note("  ↻ empty reply; asking the model to continue");
@@ -645,7 +640,7 @@ int App::run_turn(const std::string& user_text) {
             ToolOutput o = run_bash(cfg.check, tool_cap(), cfg.timeout_s);
             if (!o.error) {
                 note("  ✓ " + cfg.check);
-            } else if (!g_interrupted && checks++ < 2 && step + 1 < cfg.max_steps) {
+            } else if (!g_interrupted && checks++ < 2) {
                 note("  ✗ " + cfg.check + " failed; asking the model to fix it");
                 msgs.push_back(message("user", "The check `" + cfg.check + "` failed after your changes:\n" + o.text +
                                                    "\nFix the problem."));
