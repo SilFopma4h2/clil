@@ -458,8 +458,9 @@ std::string new_call_id() {
 
 // ------------------------------------------------------------- tools
 
-int App::approve(const std::string& tool, std::string& feedback) {
-    if (cfg.yes || always_allow.count(tool)) return 1;
+int App::approve(const std::string& tool, const Json& args, std::string& feedback) {
+    std::string key = tool_always_key(tool, args);
+    if (cfg.yes || (!key.empty() && always_allow.count(key))) return 1;
     if (tty_fd < 0) {
         feedback = "Not allowed: this session has no terminal to ask for permission (run clil with --yes).";
         warn("  not allowed without a terminal (use --yes)");
@@ -474,7 +475,7 @@ int App::approve(const std::string& tool, std::string& feedback) {
     std::string a = lower(trim(ans));
     if (a.empty() || a == "y" || a == "yes" || a == "j" || a == "ja") return 1;
     if (a == "a" || a == "always" || a == "altijd") {
-        always_allow.insert(tool);
+        if (!key.empty()) always_allow.insert(key);
         return 1;
     }
     if (a == "n" || a == "no" || a == "nee") return -1;
@@ -502,7 +503,7 @@ std::string App::exec_tool(const ToolCall& c, bool& stop) {
             fprintf(stderr, "  %s%s%s\n", ce(col), utf8_clip(l, room).c_str(), ce(ansi::reset));
         }
         std::string feedback;
-        int v = approve(c.name, feedback);
+        int v = approve(c.name, args, feedback);
         if (v < 0) {
             stop = true;
             note("  └ denied");

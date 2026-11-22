@@ -189,7 +189,7 @@ bool App::ensure_model_ready() {
     if (!refresh_models(err)) {
         error(err);
         if (err.find("cannot connect") != std::string::npos)
-            note("is the LM Studio server running? start it in the app (Developer tab) or with /server start");
+            note("is the LM Studio server running? start it in the app (Developer tab) or with /server start (/doctor checks the setup)");
         return false;
     }
     const ModelInfo* m = nullptr;  // exact key or instance id only
@@ -294,6 +294,7 @@ static void print_help() {
         {"!<cmd>", "run a shell command yourself"},
         {"@path", "attach a file to your message"},
     };
+    printf("  %sEssentials: /model /clear /undo /yes /doctor%s\n\n", co(ansi::dim), co(ansi::reset));
     for (auto& c : kCmds)
         printf("  %s%-28s%s %s\n", co(ansi::cyan), c.usage, co(ansi::reset), c.desc);
     for (auto& r : rows)

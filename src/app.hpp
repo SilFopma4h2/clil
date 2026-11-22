@@ -75,7 +75,7 @@ private:
     size_t prune_history(size_t keep_recent);
     void drop_oldest();
     std::string exec_tool(const ToolCall& call, bool& stop);
-    int approve(const std::string& tool, std::string& feedback);
+    int approve(const std::string& tool, const Json& args, std::string& feedback);
     size_t tool_cap() const;
 };
 
