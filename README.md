@@ -159,6 +159,7 @@ yours or not private, clil works without coordination.
 - **Servers.** `--host a:1234,b:1234` balances over several servers: the one that
   already has the model and the least work wins. The choice sticks for a
   conversation (the prompt cache lives on that server) and is made again on `/clear`.
+- **Skills.** `.claude/skills/<name>/SKILL.md` (and `~/.claude/skills`) are listed in the system prompt; the model reads one when it fits. `/skills` lists them, `/skills <name>` shows one.
 - **MCP.** `/mcp connect` reads the tool list from `~/.clil/mcp-cache.json` and
   starts nothing until the model first calls a tool. If a server then fails to
   start, the cache entry is dropped, so `/mcp disconnect` + `/mcp connect` starts it

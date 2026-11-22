@@ -1,10 +1,12 @@
 #include "util.hpp"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <pwd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cerrno>
 #include <cstdarg>
 #include <cstdio>
@@ -160,6 +162,45 @@ bool is_file(const std::string& p) {
 bool is_dir(const std::string& p) {
     struct stat st;
     return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static std::string frontmatter(const std::string& text, const std::string& key) {
+    std::vector<std::string> ls = split_lines(text);
+    if (ls.empty() || trim(ls[0]) != "---") return "";
+    for (size_t i = 1; i < ls.size() && trim(ls[i]) != "---"; ++i)
+        if (starts_with(ls[i], (key + ":").c_str())) {
+            std::string v = trim(ls[i].substr(key.size() + 1));
+            if (v.size() > 1 && (v[0] == '"' || v[0] == '\'') && v.back() == v[0]) v = v.substr(1, v.size() - 2);
+            return v;
+        }
+    return "";
+}
+
+std::vector<Skill> list_skills(const std::vector<std::string>& roots) {
+    std::vector<Skill> out;
+    for (const std::string& root : roots) {
+        DIR* d = opendir(root.c_str());
+        if (!d) continue;
+        std::vector<std::string> dirs;
+        while (dirent* e = readdir(d))
+            if (e->d_name[0] != '.') dirs.push_back(e->d_name);
+        closedir(d);
+        std::sort(dirs.begin(), dirs.end());
+        for (const std::string& n : dirs) {
+            std::string path = root + "/" + n + "/SKILL.md", body, err;
+            if (!read_file(path, body, err)) continue;
+            std::string name = frontmatter(body, "name");
+            if (name.empty()) name = n;
+            bool dup = false;
+            for (auto& s : out) dup |= s.name == name;
+            if (!dup) out.push_back({name, frontmatter(body, "description"), path});
+        }
+    }
+    return out;
+}
+
+std::vector<Skill> list_skills() {
+    return list_skills({".claude/skills", home_dir() + "/.claude/skills"});
 }
 
 bool read_file(const std::string& path, std::string& out, std::string& err) {
