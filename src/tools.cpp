@@ -58,6 +58,43 @@ static std::string arg_str(const Json& a, std::initializer_list<const char*> key
     return "";
 }
 
+// shortcut: lexical check, symlinks are not resolved; upgrade to realpath if that matters.
+bool path_outside_cwd(const std::string& path) {
+    std::string p = expand_home(path);
+    if (p.empty() || p[0] != '/') p = cwd() + "/" + p;
+    std::vector<std::string> parts;
+    size_t i = 0;
+    while (i <= p.size()) {
+        size_t e = p.find('/', i);
+        if (e == std::string::npos) e = p.size();
+        std::string seg = p.substr(i, e - i);
+        if (seg == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else if (!seg.empty() && seg != ".") {
+            parts.push_back(seg);
+        }
+        i = e + 1;
+    }
+    std::string norm;
+    for (auto& x : parts) norm += "/" + x;
+    std::string root = cwd();
+    return !(norm == root || starts_with(norm, (root + "/").c_str()));
+}
+
+std::string tool_always_key(const std::string& n, const Json& a) {
+    if (n == "write" || n == "edit" || n == "insert") return path_outside_cwd(arg_str(a, {"path"})) ? "" : n;
+    if (n != "bash") return n;
+    std::string c = trim(arg_str(a, {"command", "cmd"}));
+    if (c.find_first_of(";&|`$<>\n(") != std::string::npos) return "";
+    std::vector<std::string> w = split_args(c);
+    if (w.empty()) return "";
+    for (const char* bad : {"rm", "sudo", "dd", "mkfs", "chmod", "chown", "mv", "kill", "pkill"})
+        if (w[0] == bad) return "";
+    if (w[0] == "git" && w.size() > 1 && w[1] == "push") return "";
+    return "bash:" + w[0];
+}
+
+
 // Models invent names for the path argument (filepath, file_name, ...): take any string key that looks like one.
 static std::string arg_path(const Json& a) {
     std::string p = arg_str(a, {"path", "file_path", "file"});

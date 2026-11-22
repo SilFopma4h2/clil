@@ -17,6 +17,11 @@ Json tool_schemas();
 bool tool_mutates(const std::string& name);  // needs approval unless --yes
 bool tool_known(const std::string& name);
 
+// Key under which "always" is remembered for a call; "" = never remember (destructive command,
+// shell chaining, or a write outside the working directory).
+std::string tool_always_key(const std::string& name, const Json& args);
+bool path_outside_cwd(const std::string& path);
+
 // One-line description of a call, e.g. "bash  ls -la"; plus a preview of a pending change.
 std::string tool_title(const std::string& name, const Json& args);
 std::vector<std::string> tool_change_preview(const std::string& name, const Json& args);

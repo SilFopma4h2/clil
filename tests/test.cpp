@@ -168,6 +168,27 @@ static void test_json() {
     CHECK(o.erase("k") && !o.has("k"));
 }
 
+static void test_always_key() {
+    auto bash = [](const char* c) {
+        Json a = Json::object();
+        a.set("command", c);
+        return tool_always_key("bash", a);
+    };
+    CHECK_EQ(bash("ls -la"), std::string("bash:ls"));
+    CHECK_EQ(bash("rm -rf x"), std::string(""));
+    CHECK_EQ(bash("ls; rm -rf ~"), std::string(""));
+    CHECK_EQ(bash("git push --force"), std::string(""));
+    CHECK_EQ(bash("git status"), std::string("bash:git"));
+    CHECK(!path_outside_cwd("src/a.c"));
+    CHECK(!path_outside_cwd(cwd() + "/a"));
+    CHECK(path_outside_cwd("../x"));
+    CHECK(path_outside_cwd("~/.zshrc"));
+    CHECK(path_outside_cwd("src/../../x"));
+    Json w = Json::object();
+    w.set("path", "~/.zshrc");
+    CHECK_EQ(tool_always_key("write", w), std::string(""));
+}
+
 static void test_skills(const std::string& dir) {
     std::string err;
     make_dirs(dir + "/s/demo");
@@ -794,6 +815,7 @@ int main(int argc, char** argv) {
     test_check(dir);
     test_cd(dir);
     test_skills(dir);
+    test_always_key();
     test_state();
     test_mcp(dir);
     run_attached({"rm", "-rf", dir});
