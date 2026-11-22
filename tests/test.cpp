@@ -168,6 +168,18 @@ static void test_json() {
     CHECK(o.erase("k") && !o.has("k"));
 }
 
+static void test_skills(const std::string& dir) {
+    std::string err;
+    make_dirs(dir + "/s/demo");
+    write_file(dir + "/s/demo/SKILL.md", "---\nname: demo\ndescription: \"does demo\"\n---\nbody\n", err);
+    make_dirs(dir + "/s/bare");
+    write_file(dir + "/s/bare/SKILL.md", "no frontmatter", err);
+    auto sk = list_skills({dir + "/s", dir + "/missing"});
+    CHECK(sk.size() == 2);
+    CHECK(sk.size() == 2 && sk[0].name == "bare" && sk[0].desc.empty());
+    CHECK(sk.size() == 2 && sk[1].name == "demo" && sk[1].desc == "does demo");
+}
+
 static void test_util() {
     CHECK_EQ(clean_terminal_output("a\x1b[31mred\x1b[0m\n10%\r50%\r100%\nend\r\n"), std::string("ared\n100%\nend\n"));
     CHECK_EQ(clean_terminal_output("\x1b]0;title\x07ok"), std::string("ok"));
@@ -781,6 +793,7 @@ int main(int argc, char** argv) {
     test_fail_stop(dir);
     test_check(dir);
     test_cd(dir);
+    test_skills(dir);
     test_state();
     test_mcp(dir);
     run_attached({"rm", "-rf", dir});

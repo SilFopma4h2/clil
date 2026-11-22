@@ -32,6 +32,13 @@ bool read_file(const std::string& path, std::string& out, std::string& err);
 bool write_file(const std::string& path, const std::string& data, std::string& err);
 bool make_dirs(const std::string& dir);  // mkdir -p
 
+// Skills: <root>/<name>/SKILL.md with `name:` / `description:` frontmatter. First root wins on duplicates.
+struct Skill {
+    std::string name, desc, path;
+};
+std::vector<Skill> list_skills(const std::vector<std::string>& roots);
+std::vector<Skill> list_skills();  // ./.claude/skills and ~/.claude/skills
+
 // UTF-8: length of a valid sequence at p (0 if invalid), safe truncation, cleanup.
 size_t utf8_len(const unsigned char* p, size_t n);
 size_t utf8_floor(const std::string& s, size_t max_bytes);

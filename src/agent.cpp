@@ -70,6 +70,11 @@ std::string App::system_prompt() const {
         if (is_file(name) && read_file(name, body, err) && !trim(body).empty())
             s += "\n\nInstructions from " + name + ":\n" + utf8_clip(trim(body), 6000);
     }
+    std::string sk;
+    for (const Skill& k : list_skills())
+        sk += "\n- " + k.name + ": " + utf8_clip(k.desc, 200) + " (" + k.path + ")";
+    if (cfg.tools && !sk.empty())
+        s += "\n\nSkills: when a task matches one, read its SKILL.md with read and follow it." + utf8_clip(sk, 1500);
     if (!cfg.system_extra.empty()) s += "\n\n" + cfg.system_extra;
     return s;
 }

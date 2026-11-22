@@ -271,6 +271,7 @@ static const CmdInfo kCmds[] = {
     {"/peers", "other clil's on this machine and what they are doing"},
     {"/host [n|host:port]", "list or switch the LM Studio servers (several: --host a,b)"},
     {"/mcp [connect|disconnect <name>]", "list or connect MCP servers from ~/.lmstudio/mcp.json"},
+    {"/skills [name]", "list skills from .claude/skills and ~/.claude/skills, or show one"},
     {"/status", "server, model, context, slots, MCP and other clil's at a glance"},
     {"/stats", "tokens, speed and generation time this session"},
     {"/doctor", "check server, model, tools and config"},
@@ -563,6 +564,19 @@ bool App::command(const std::string& line) {
         cfg.system_extra = lower(rest) == "off" ? "" : rest;
         if (!msgs.empty()) msgs[0].set("content", system_prompt());
         note(cfg.system_extra.empty() ? "extra system instructions removed" : "system instructions updated");
+    } else if (cmd == "/skills") {
+        std::vector<Skill> sk = list_skills();
+        if (sk.empty()) return note("no skills (put them in .claude/skills/<name>/SKILL.md)"), true;
+        for (const Skill& k : sk) {
+            if (a.size() > 1 && k.name != a[1]) continue;
+            if (a.size() > 1) {
+                std::string body;
+                if (!read_file(k.path, body, err)) return error(err), true;
+                printf("%s\n", body.c_str());
+            } else {
+                printf("%s — %s\n  %s\n", k.name.c_str(), k.desc.c_str(), k.path.c_str());
+            }
+        }
     } else if (cmd == "/draft") {
         if (a.size() > 1) {
             const ModelInfo* m = lower(a[1]) == "off" ? nullptr : find_model(a[1]);
