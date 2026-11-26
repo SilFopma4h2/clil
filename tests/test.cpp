@@ -462,6 +462,17 @@ static void test_undo(const std::string& dir) {
 }
 
 static void test_reply_helpers() {
+    std::string block, varied;
+    for (int i = 0; i < 200; ++i)
+        block += (char)('a' + i % 26);
+    for (int i = 0; i < 3000; ++i)
+        varied += std::to_string(i) + ' ';
+    std::string rep;
+    for (int i = 0; i < 20; ++i)
+        rep += block + std::to_string(i % 2);
+    CHECK(looping(varied + rep));
+    CHECK(!looping(varied));
+    CHECK(!looping(block + block + block));
     CHECK_EQ(strip_think("<think>\nplan\n</think>\n\nAnswer"), std::string("Answer"));
     CHECK_EQ(strip_think("plan only\n</think>Answer"), std::string("Answer"));
     CHECK_EQ(strip_think("a<think>x</think>b<think>unfinished"), std::string("ab"));
