@@ -27,6 +27,7 @@ struct ChatReply {
     std::vector<ToolCall> calls;
     std::string finish, error;
     bool interrupted = false;
+    bool looped = false;  // aborted: the model kept repeating itself
     long long prompt_tokens = -1, completion_tokens = -1;
     int deltas = 0;  // streamed pieces, a token estimate when usage is missing
     double ttft = 0, gen_secs = 0;

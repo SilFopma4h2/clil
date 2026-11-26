@@ -10,6 +10,7 @@ extern volatile std::sig_atomic_t g_interrupted;
 
 double now_secs();
 std::string trim(const std::string& s);
+bool looping(const std::string& s);  // the tail of s repeats verbatim: a degenerate generation
 bool starts_with(const std::string& s, const char* prefix);
 bool ends_with(const std::string& s, const char* suffix);
 std::string lower(std::string s);

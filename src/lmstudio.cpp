@@ -162,6 +162,7 @@ ChatReply LMStudio::chat(const std::string& body, const ChatEvents& ev) {
     std::vector<std::pair<long long, size_t>> slot;  // tool call stream index -> position in rep.calls
     bool done = false;
     double t0 = now_secs(), t_first = 0;
+    size_t checked = 0;  // reasoning + content size at the last loop check
 
     auto mark_first = [&]() {
         if (t_first == 0) t_first = now_secs();
@@ -200,6 +201,14 @@ ChatReply LMStudio::chat(const std::string& body, const ChatEvents& ev) {
             rep.deltas++;
             rep.content += c;
             if (ev.content) ev.content(c);
+        }
+        if (rep.reasoning.size() + rep.content.size() >= checked + 1000) {
+            checked = rep.reasoning.size() + rep.content.size();
+            if (looping(rep.reasoning) || looping(rep.content)) {
+                rep.looped = true;
+                done = true;
+                return;
+            }
         }
         const Json& tcs = d["tool_calls"];
         for (size_t i = 0; i < tcs.size(); ++i) {

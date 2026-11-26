@@ -31,6 +31,17 @@ std::string trim(const std::string& s) {
     return s.substr(a, b - a);
 }
 
+bool looping(const std::string& s) {
+    const size_t probe = 200, window = 20000;
+    if (s.size() < 2000) return false;
+    size_t from = s.size() > window ? s.size() - window : 0;
+    std::string tail = s.substr(s.size() - probe);
+    int n = 0;
+    for (size_t p = s.find(tail, from); p != std::string::npos && n < 3; p = s.find(tail, p + 1))
+        ++n;
+    return n >= 3;
+}
+
 bool starts_with(const std::string& s, const char* p) {
     size_t n = strlen(p);
     return s.size() >= n && s.compare(0, n, p) == 0;
